@@ -1,9 +1,9 @@
 -- Merging decision tree log ---
 manifest
-ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:1:1-48:12
-INJECTED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:1:1-48:12
-INJECTED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:1:1-48:12
-INJECTED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:1:1-48:12
+ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:1:1-49:12
+INJECTED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:1:1-49:12
+INJECTED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:1:1-49:12
+INJECTED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:1:1-49:12
 MERGED from [androidx.navigation:navigation-common:2.6.0] C:\Users\Administrator\.gradle\caches\transforms-3\a8cb19bfa87432b711f5d98248f8074e\transformed\navigation-common-2.6.0\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.navigation:navigation-runtime:2.6.0] C:\Users\Administrator\.gradle\caches\transforms-3\75eebdf4a943287c64af42201b61f851\transformed\navigation-runtime-2.6.0\AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.navigation:navigation-common-ktx:2.6.0] C:\Users\Administrator\.gradle\caches\transforms-3\65652fd0e552b582145e40daf7f978e3\transformed\navigation-common-ktx-2.6.0\AndroidManifest.xml:17:1-22:12
@@ -79,8 +79,8 @@ ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\Androi
 	android:name
 		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:10:22-78
 application
-ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:12:5-46:19
-INJECTED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:12:5-46:19
+ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:12:5-47:19
+INJECTED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:12:5-47:19
 MERGED from [androidx.emoji2:emoji2:1.3.0] C:\Users\Administrator\.gradle\caches\transforms-3\cb9fc2e8c2feb79a9206a2c95141fb19\transformed\emoji2-1.3.0\AndroidManifest.xml:23:5-33:19
 MERGED from [androidx.emoji2:emoji2:1.3.0] C:\Users\Administrator\.gradle\caches\transforms-3\cb9fc2e8c2feb79a9206a2c95141fb19\transformed\emoji2-1.3.0\AndroidManifest.xml:23:5-33:19
 MERGED from [androidx.lifecycle:lifecycle-process:2.6.1] C:\Users\Administrator\.gradle\caches\transforms-3\b4ba64c7bbc47d99b7749a54e1437bee\transformed\lifecycle-process-2.6.1\AndroidManifest.xml:23:5-33:19
@@ -100,59 +100,61 @@ MERGED from [androidx.startup:startup-runtime:1.1.1] C:\Users\Administrator\.gra
 	android:appComponentFactory
 		ADDED from [androidx.core:core:1.12.0] C:\Users\Administrator\.gradle\caches\transforms-3\dab17d51c172003dfc06097f060844ca\transformed\core-1.12.0\AndroidManifest.xml:28:18-86
 	android:supportsRtl
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:15:9-35
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:16:9-35
 	android:label
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:14:9-38
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:15:9-38
+	android:icon
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:14:9-43
 	android:allowBackup
 		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:13:9-35
 activity#com.example.classreminder.MainActivity
-ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:17:9-23:20
+ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:18:9-24:20
 	android:exported
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:18:13-36
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:19:13-36
 	android:name
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:17:19-72
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:18:19-72
 intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
-ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:19:13-22:29
+ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:20:13-23:29
 action#android.intent.action.MAIN
-ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:20:17-69
+ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:21:17-69
 	android:name
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:20:25-66
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:21:25-66
 category#android.intent.category.LAUNCHER
-ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:21:17-77
+ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:22:17-77
 	android:name
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:21:27-74
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:22:27-74
 activity#com.example.classreminder.LockOverlayActivity
-ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:26:9-31:49
+ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:27:9-32:49
 	android:turnScreenOn
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:30:13-40
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:31:13-40
 	android:excludeFromRecents
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:31:13-46
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:32:13-46
 	android:showWhenLocked
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:29:13-42
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:30:13-42
 	android:exported
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:28:13-37
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:29:13-37
 	android:name
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:27:13-73
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:28:13-73
 service#com.example.classreminder.ClassReminderService
-ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:35:9-38:40
+ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:36:9-39:40
 	android:exported
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:38:13-37
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:39:13-37
 	android:foregroundServiceType
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:37:13-53
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:38:13-53
 	android:name
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:36:13-74
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:37:13-74
 receiver#com.example.classreminder.BootReceiver
-ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:40:9-45:20
+ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:41:9-46:20
 	android:exported
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:41:13-36
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:42:13-36
 	android:name
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:40:19-72
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:41:19-72
 intent-filter#action:name:android.intent.action.BOOT_COMPLETED
-ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:42:13-44:29
+ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:43:13-45:29
 action#android.intent.action.BOOT_COMPLETED
-ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:43:17-79
+ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:44:17-79
 	android:name
-		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:43:25-76
+		ADDED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml:44:25-76
 uses-sdk
 INJECTED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from C:\Users\Administrator\IdeaProjects\ClassReminder\app\src\main\AndroidManifest.xml

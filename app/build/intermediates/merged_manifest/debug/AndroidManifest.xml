@@ -28,6 +28,7 @@
         android:appComponentFactory="androidx.core.app.CoreComponentFactory"
         android:debuggable="true"
         android:extractNativeLibs="true"
+        android:icon="@mipmap/ic_launcher"
         android:label="ClassReminder"
         android:supportsRtl="true"
         android:testOnly="true" >

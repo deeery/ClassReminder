@@ -63,7 +63,7 @@ class ClassReminderService : Service() {
         val notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle(title)
             .setContentText(content)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(com.example.classreminder.R.drawable.ic_notification_clock)
             .setOngoing(true)
             .build()
 
@@ -74,7 +74,7 @@ class ClassReminderService : Service() {
         val notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle(title)
             .setContentText(content)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(com.example.classreminder.R.drawable.ic_notification_clock)
             .setOngoing(true)
             .build()
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -163,6 +163,7 @@ class ClassReminderService : Service() {
             updateForegroundNotification("ClassReminder", "运行中 — 今日无课")
         }
 
+        // ── 有课程需提醒：升级前台通知（高优先级 + 可选全屏弹窗） ──
         if (chosen != null) {
             val id = chosen.entity.id
             if (lastShownId == id) return
@@ -170,13 +171,21 @@ class ClassReminderService : Service() {
             // Check notification permission on Android 13+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                    // cannot post notifications
                     return
                 }
             }
 
             val showPopup = Prefs.getShowPopup(applicationContext)
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val prefix = if (now in chosen.startMillis..chosen.endMillis) "正在上课" else "即将上课"
+
+            // Build the same foreground notification but with HIGH priority
+            var builder = NotificationCompat.Builder(this, channelId)
+                .setContentTitle("$prefix：${chosen.entity.title}")
+                .setContentText("${chosen.entity.room}  ${formatTime(chosen.startMillis)} - ${formatTime(chosen.endMillis)}")
+                .setSmallIcon(com.example.classreminder.R.drawable.ic_notification_clock)
+                .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
 
             if (showPopup) {
                 val intent = Intent(this, LockOverlayActivity::class.java).apply {
@@ -186,35 +195,14 @@ class ClassReminderService : Service() {
                     putExtra("room", chosen.entity.room)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 }
-
                 val pending = PendingIntent.getActivity(this, 1001, intent,
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
                     else PendingIntent.FLAG_UPDATE_CURRENT)
-
-                val notif = NotificationCompat.Builder(this, notifChannelId)
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .setContentTitle("当前课程：${chosen.entity.title}")
-                    .setContentText("${chosen.entity.room}  ${formatTime(chosen.startMillis)} - ${formatTime(chosen.endMillis)}")
-                    .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setCategory(NotificationCompat.CATEGORY_ALARM)
-                    .setFullScreenIntent(pending, true)
-                    .setAutoCancel(true)
-                    .build()
-
-                nm.notify(2001, notif)
-            } else {
-                // show normal notification only
-                val notif = NotificationCompat.Builder(this, notifChannelId)
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .setContentTitle("当前课程：${chosen.entity.title}")
-                    .setContentText("${chosen.entity.room}  ${formatTime(chosen.startMillis)} - ${formatTime(chosen.endMillis)}")
-                    .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setCategory(NotificationCompat.CATEGORY_ALARM)
-                    .setAutoCancel(true)
-                    .build()
-
-                nm.notify(2001, notif)
+                builder = builder.setFullScreenIntent(pending, true)
             }
+
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(1, builder.build())
 
             lastShownId = id
         } else {

@@ -1,12 +1,17 @@
 package com.example.classreminder.ui
 
 import android.app.TimePickerDialog
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.ExposedDropdownMenuBox
 import androidx.compose.material.ExposedDropdownMenuDefaults
@@ -14,62 +19,67 @@ import androidx.compose.material.DropdownMenuItem
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.classreminder.data.ClassEntity
 import com.example.classreminder.data.MainViewModel
 import com.example.classreminder.Prefs
 
+private val dayOrder = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+private val dayLabel = mapOf(
+    "Monday" to "周一", "Tuesday" to "周二", "Wednesday" to "周三",
+    "Thursday" to "周四", "Friday" to "周五", "Saturday" to "周六", "Sunday" to "周日"
+)
+
 @Composable
 fun MainScreen(
     viewModel: MainViewModel,
-    onStartMonitoringRequested: () -> Unit,
+    themeMode: Int,
+    onThemeModeChanged: (Int) -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val classes by viewModel.classes.collectAsState(initial = emptyList())
     var editing by remember { mutableStateOf<ClassEntity?>(null) }
     var showAdd by remember { mutableStateOf(false) }
-    var showSettings by remember { mutableStateOf(false) }
+    var selectedTab by remember { mutableStateOf(0) } // 0=列表, 1=课表, 2=设置
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("Class Reminder") }, actions = {
-                TextButton(onClick = onStartMonitoringRequested) { Text("启用提醒") }
-                IconButton(onClick = { showSettings = true }) {
-                    Icon(
-                        Icons.Filled.Settings,
-                        contentDescription = "Settings",
-                        tint = MaterialTheme.colors.onPrimary
-                    )
-                }
-            })
+            TopAppBar(
+                title = { Text("Class Reminder", modifier = Modifier.padding(top = 6.dp)) },
+                backgroundColor = MaterialTheme.colors.surface,
+                contentColor = MaterialTheme.colors.onSurface
+            )
+        },
+        bottomBar = {
+            BottomNavigationBar(
+                selectedTab = selectedTab,
+                onTabSelected = { tab -> selectedTab = tab }
+            )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showAdd = true }) { Text("+") }
+            if (selectedTab != 2) {
+                FloatingActionButton(
+                    onClick = { showAdd = true },
+                    backgroundColor = MaterialTheme.colors.primary
+                ) { Text("+") }
+            }
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(classes) { item ->
-                    Card(modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp)) {
-                        Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(text = item.title, style = MaterialTheme.typography.h6)
-                                Text(text = "${item.dayOfWeek} ${item.startTime} - ${item.endTime}")
-                                Text(text = "教室: ${item.room}")
-                            }
-                            Row {
-                                TextButton(onClick = { editing = item }) { Text("Edit") }
-                                TextButton(onClick = {
-                                    viewModel.delete(item)
-                                }) { Text("Delete") }
-                            }
-                        }
-                    }
-                }
+            when (selectedTab) {
+                0 -> ClassListView(classes, onEdit = { editing = it }, onDelete = { viewModel.delete(it) })
+                1 -> WeekView(classes)
+                2 -> SettingsPage(
+                    themeMode = themeMode,
+                    onThemeModeChanged = onThemeModeChanged,
+                    onRequestNotificationPermission = onRequestNotificationPermission,
+                    onOpenSettings = onOpenSettings
+                )
             }
         }
     }
@@ -87,15 +97,277 @@ fun MainScreen(
             editing = null
         }, onDismiss = { editing = null })
     }
+}
 
-    if (showSettings) {
-        SettingsDialog(
-            onDismiss = { showSettings = false },
-            onRequestNotificationPermission = onRequestNotificationPermission,
-            onOpenSettings = onOpenSettings
-        )
+// ── 底部导航栏 ──────────────────────────────────────────────────
+
+data class BottomNavItem(val label: String, val icon: ImageVector)
+
+@Composable
+fun BottomNavigationBar(selectedTab: Int, onTabSelected: (Int) -> Unit) {
+    val items = listOf(
+        BottomNavItem("列表", Icons.AutoMirrored.Filled.List),
+        BottomNavItem("课表", Icons.Default.DateRange),
+        BottomNavItem("设置", Icons.Default.Settings)
+    )
+    BottomNavigation {
+        items.forEachIndexed { index, item ->
+            BottomNavigationItem(
+                selected = selectedTab == index,
+                onClick = { onTabSelected(index) },
+                icon = { Icon(item.icon, contentDescription = item.label) },
+                label = { Text(item.label) }
+            )
+        }
     }
 }
+
+// ── 列表视图 ────────────────────────────────────────────────────
+
+@Composable
+fun ClassListView(
+    classes: List<ClassEntity>,
+    onEdit: (ClassEntity) -> Unit,
+    onDelete: (ClassEntity) -> Unit
+) {
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        items(classes) { item ->
+            Card(modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp)) {
+                Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = item.title, style = MaterialTheme.typography.h6)
+                        Text(text = "${dayLabel[item.dayOfWeek] ?: item.dayOfWeek} ${item.startTime} - ${item.endTime}")
+                        Text(text = "教室: ${item.room}")
+                    }
+                    Row {
+                        TextButton(onClick = { onEdit(item) }) { Text("Edit") }
+                        TextButton(onClick = { onDelete(item) }) { Text("Delete") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── 周课表视图（可折叠） ──────────────────────────────────────────
+
+@Composable
+fun WeekView(classes: List<ClassEntity>) {
+    val grouped = classes.groupBy { it.dayOfWeek }
+
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 4.dp)) {
+        dayOrder.forEach { day ->
+            val dayClasses = grouped[day]?.sortedBy { it.startTime } ?: emptyList()
+            item(key = day) {
+                var expanded by remember { mutableStateOf(true) }
+
+                Column {
+                    // ── 可点击的标题行 ──
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { expanded = !expanded }
+                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = dayLabel[day] ?: day,
+                            style = MaterialTheme.typography.subtitle1,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = if (expanded) "折叠" else "展开",
+                            tint = MaterialTheme.colors.onSurface.copy(alpha = 0.5f)
+                        )
+                    }
+
+                    // ── 可折叠的课程列表 ──
+                    AnimatedVisibility(visible = expanded) {
+                        Column {
+                            if (dayClasses.isEmpty()) {
+                                Text(
+                                    text = "  无课",
+                                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.4f),
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)
+                                )
+                            } else {
+                                dayClasses.forEach { cls ->
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 2.dp),
+                                        elevation = 1.dp
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Text(cls.startTime, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                                                Text("-", fontSize = 10.sp)
+                                                Text(cls.endTime, fontSize = 13.sp)
+                                            }
+                                            Spacer(Modifier.width(12.dp))
+                                            Column {
+                                                Text(cls.title, fontWeight = FontWeight.SemiBold)
+                                                Text("教室: ${cls.room}", fontSize = 13.sp,
+                                                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 分割线
+                    Divider(modifier = Modifier.padding(top = 4.dp))
+                }
+            }
+        }
+    }
+}
+
+// ── 设置页面（独立全屏） ──────────────────────────────────────────
+
+@Composable
+fun SettingsPage(
+    themeMode: Int,
+    onThemeModeChanged: (Int) -> Unit,
+    onRequestNotificationPermission: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val ctx = LocalContext.current
+    val initialAdvance = remember { runCatching { Prefs.getAdvanceMinutes(ctx) }.getOrDefault(30) }
+    var advance by remember { mutableStateOf(initialAdvance.toString()) }
+    val initialAutoStart = remember { runCatching { Prefs.getAutoStart(ctx) }.getOrDefault(false) }
+    var autoStart by remember { mutableStateOf(initialAutoStart) }
+    val initialShowPopup = remember { runCatching { Prefs.getShowPopup(ctx) }.getOrDefault(true) }
+    var showPopupPref by remember { mutableStateOf(initialShowPopup) }
+    var saved by remember { mutableStateOf(false) }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(16.dp)
+    ) {
+        item {
+            Text("设置", style = MaterialTheme.typography.h5, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(20.dp))
+
+            OutlinedTextField(
+                value = advance,
+                onValueChange = { advance = it; saved = false },
+                label = { Text("提前提醒分钟数") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(16.dp))
+
+            // ── 开机自启 ──
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("开机自启", fontSize = 16.sp)
+                Switch(checked = autoStart, onCheckedChange = { autoStart = it; saved = false },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = MaterialTheme.colors.primary,
+                        checkedTrackColor = MaterialTheme.colors.primary.copy(alpha = 0.5f)
+                    )
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+
+            // ── 显示弹窗 ──
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("显示弹窗（锁屏弹出）", fontSize = 16.sp)
+                Switch(checked = showPopupPref, onCheckedChange = { showPopupPref = it; saved = false },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = MaterialTheme.colors.primary,
+                        checkedTrackColor = MaterialTheme.colors.primary.copy(alpha = 0.5f)
+                    )
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+
+            // ── 主题模式 ──
+            Text("主题模式", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(8.dp))
+            ThemeMode.entries.forEachIndexed { index, mode ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onThemeModeChanged(index) }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = themeMode == index,
+                        onClick = { onThemeModeChanged(index) },
+                        colors = RadioButtonDefaults.colors(
+                            selectedColor = MaterialTheme.colors.primary
+                        )
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(mode.label, fontSize = 15.sp)
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+
+            // ── 操作按钮 ──
+            Button(
+                onClick = {
+                    onRequestNotificationPermission()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("请求通知权限")
+            }
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = { onOpenSettings() },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("打开系统设置")
+            }
+            Spacer(Modifier.height(24.dp))
+
+            // ── 保存按钮 ──
+            Button(
+                onClick = {
+                    val minutes = advance.toIntOrNull() ?: 30
+                    Prefs.setAdvanceMinutes(ctx, minutes)
+                    Prefs.setAutoStart(ctx, autoStart)
+                    Prefs.setShowPopup(ctx, showPopupPref)
+                    saved = true
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = advance.toIntOrNull() != null
+            ) {
+                Text(if (saved) "已保存 ✓" else "保存设置")
+            }
+            if (saved) {
+                Text(
+                    "设置已保存",
+                    color = MaterialTheme.colors.primary,
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+// ── 添加/编辑对话框 ──────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterialApi::class)
 @Composable
@@ -210,72 +482,5 @@ fun AddEditDialog(initial: ClassEntity? = null, onSave: (ClassEntity) -> Unit, o
             }, enabled = startValid && endValid && startBeforeEnd && title.isNotBlank()) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
-}
-
-
-@Composable
-fun SettingsDialog(
-    onDismiss: () -> Unit,
-    onRequestNotificationPermission: () -> Unit,
-    onOpenSettings: () -> Unit
-) {
-    val ctx = LocalContext.current
-    // Read preferences safely during composition
-    val initialAdvance = remember { runCatching { Prefs.getAdvanceMinutes(ctx) }.getOrDefault(30) }
-    var advance by remember { mutableStateOf(initialAdvance.toString()) }
-    val initialAutoStart = remember { runCatching { Prefs.getAutoStart(ctx) }.getOrDefault(false) }
-    var autoStart by remember { mutableStateOf(initialAutoStart) }
-    val initialShowPopup = remember { runCatching { Prefs.getShowPopup(ctx) }.getOrDefault(true) }
-    var showPopupPref by remember { mutableStateOf(initialShowPopup) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("设置") },
-        text = {
-            Column {
-                OutlinedTextField(value = advance, onValueChange = { advance = it }, label = { Text("提前提醒分钟数") }, singleLine = true)
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("开机自启")
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Switch(checked = autoStart, onCheckedChange = { autoStart = it })
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("显示弹窗（锁屏弹出）")
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Switch(checked = showPopupPref, onCheckedChange = { showPopupPref = it })
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-                Row {
-                    Button(onClick = {
-                        onRequestNotificationPermission()
-                    }) { Text("请求通知权限") }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(onClick = {
-                        onOpenSettings()
-                    }) { Text("打开系统设置") }
-                }
-            }
-        },
-        confirmButton = {
-            Button(onClick = {
-                val minutes = advance.toIntOrNull() ?: 30
-                Prefs.setAdvanceMinutes(ctx, minutes)
-                Prefs.setAutoStart(ctx, autoStart)
-                Prefs.setShowPopup(ctx, showPopupPref)
-                // If user enabled auto-start or popup, they can start the service
-                // via the "启用提醒" button on the main screen (which handles
-                // permission checks properly). Service also starts automatically
-                // on next boot via BootReceiver.
-                // Do NOT call startForegroundService here — it requires
-                // POST_NOTIFICATIONS + FOREGROUND_SERVICE_DATA_SYNC permissions
-                // and crashes the process if those are missing.
-                // No checkNow here — the service polls every 30s automatically.
-                onDismiss()
-            }) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
 }

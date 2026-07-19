@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 把钟表图标在水平方向稍微拉伸（更宽），整体通过 inset 缩小一点 -->
+<scale xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_icon"
+    android:scaleGravity="center"
+    android:scaleWidth="1.12"
+    android:scaleHeight="1.0">
+</scale>

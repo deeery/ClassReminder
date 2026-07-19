@@ -1,6 +1,7 @@
 // Add MainActivity with Jetpack Compose UI
 package com.example.classreminder
 
+import android.os.Build
 import android.os.Bundle
 import android.Manifest
 import android.content.Intent
@@ -8,8 +9,13 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.material.AlertDialog
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
@@ -18,7 +24,9 @@ import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Surface
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.classreminder.data.MainViewModel
+import com.example.classreminder.ui.ClassReminderTheme
 import com.example.classreminder.ui.MainScreen
+import com.example.classreminder.ui.ThemeMode
 
 class MainActivity : ComponentActivity() {
     private lateinit var requestPermissionLauncher: ActivityResultLauncher<String>
@@ -57,8 +65,27 @@ class MainActivity : ComponentActivity() {
         // Note: don't immediately request permissions here. We show a first-run explanation dialog
         // inside the Compose UI and request permissions only after the user confirms.
         setContent {
-            MaterialTheme {
-                Surface {
+            var themeMode by remember { mutableStateOf(Prefs.getThemeMode(this@MainActivity)) }
+
+            // Sync status bar with TopAppBar
+            val isDark = when (ThemeMode.entries.getOrElse(themeMode) { ThemeMode.FOLLOW_SYSTEM }) {
+                ThemeMode.FOLLOW_SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+            }
+            DisposableEffect(isDark) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    window.statusBarColor = if (isDark) android.graphics.Color.parseColor("#1E1E1E") else android.graphics.Color.WHITE
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    val controller = WindowInsetsControllerCompat(window, window.decorView)
+                    controller.isAppearanceLightStatusBars = !isDark
+                }
+                onDispose { }
+            }
+
+            ClassReminderTheme(themeMode = ThemeMode.entries.getOrElse(themeMode) { ThemeMode.FOLLOW_SYSTEM }) {
+                Surface(color = MaterialTheme.colors.surface) {
                     // permission request lambdas
                     val requestNotification: () -> Unit = {
                         try {
@@ -111,7 +138,11 @@ class MainActivity : ComponentActivity() {
                     }
                     MainScreen(
                         viewModel = viewModel(),
-                        onStartMonitoringRequested = { ensureNotificationPermissionAndStart() },
+                        themeMode = themeMode,
+                        onThemeModeChanged = { newMode ->
+                            themeMode = newMode
+                            Prefs.setThemeMode(this@MainActivity, newMode)
+                        },
                         onRequestNotificationPermission = requestNotification,
                         onOpenSettings = openAppSettings
                     )

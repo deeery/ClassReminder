@@ -39,6 +39,7 @@ object Prefs {
     }
 
     private const val KEY_FIRST_RUN = "first_run"
+    private const val KEY_THEME_MODE = "theme_mode"  // 0=follow_system, 1=light, 2=dark
 
     fun isFirstRun(ctx: Context): Boolean {
         val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
@@ -48,6 +49,16 @@ object Prefs {
     fun setFirstRunDone(ctx: Context) {
         val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
         sp.edit().putBoolean(KEY_FIRST_RUN, false).apply()
+    }
+
+    fun getThemeMode(ctx: Context): Int {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        return sp.getInt(KEY_THEME_MODE, 0)  // default follow system
+    }
+
+    fun setThemeMode(ctx: Context, mode: Int) {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        sp.edit().putInt(KEY_THEME_MODE, mode).apply()
     }
 }
 
