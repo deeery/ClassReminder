@@ -1,0 +1,48 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Required to call startForeground() on Android 9+ -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Required for foregroundServiceType="dataSync" on Android 14+ -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- For Android 13+ runtime notification permission -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Boot completed to optionally auto-start service -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application
+        android:allowBackup="true"
+        android:label="ClassReminder"
+        android:supportsRtl="true">
+        <!-- Main launcher activity -->
+        <activity android:name="com.example.classreminder.MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Activity that will be launched to show course info on the lock screen -->
+        <activity
+            android:name="com.example.classreminder.LockOverlayActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true" />
+
+        <!-- Foreground service that runs continuously and triggers lock-screen UI -->
+        <!-- android:foregroundServiceType is required on Android 14+ (targetSdk 34) -->
+        <service
+            android:name="com.example.classreminder.ClassReminderService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+        <!-- Receiver to start service on boot if user enabled auto-start -->
+        <receiver android:name="com.example.classreminder.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>
