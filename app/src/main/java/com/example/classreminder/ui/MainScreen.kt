@@ -237,10 +237,6 @@ fun MainScreen(
     var editingNote by remember { mutableStateOf<NoteEntity?>(null) }
     var addingNote by remember { mutableStateOf(false) }
     var selectedNoteId by remember { mutableStateOf<Int?>(null) }
-    // 课表交互模式：默认「查看」——点课程只选中并展开，不弹编辑框；切成「编辑」后点课程直接进编辑
-    var timetableEditMode by remember { mutableStateOf(false) }
-    // 查看模式下选中的课程；切模式或换周时清空
-    var selectedClassId by remember { mutableStateOf<Int?>(null) }
     var fabExpanded by remember { mutableStateOf(false) }
     var isSearchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -393,15 +389,6 @@ fun MainScreen(
                         }
                     } else {
                         Column(horizontalAlignment = Alignment.End) {
-                            // 查看 / 编辑 模式切换。放在加号正上方，和便签页「回撤」占同一个位置
-                            TimetableModeButton(
-                                editMode = timetableEditMode,
-                                onToggle = {
-                                    timetableEditMode = !timetableEditMode
-                                    // 切模式时清掉选中，免得留着一张「已展开」的卡片
-                                    selectedClassId = null
-                                }
-                            )
                             Spacer(Modifier.height(12.dp))
                         }
                         // ── 课表页：加号展开的两个方块，从加号那一侧向上长出来，收起时缩回去 ──
@@ -495,15 +482,8 @@ fun MainScreen(
                         Prefs.setWeekGrid(ctx, it == WeekMode.GRID)
                     },
                     shownWeek = shownWeek,
-                    onShownWeekChange = {
-                        shownWeek = it
-                        // 换周后原来选中的课多半已经不在表里了
-                        selectedClassId = null
-                    },
+                    onShownWeekChange = { shownWeek = it },
                     onCalibrate = { showCalibrate = true },
-                    editMode = timetableEditMode,
-                    selectedId = selectedClassId,
-                    onSelect = { selectedClassId = if (selectedClassId == it.id) null else it.id },
                     onEdit = { editing = it }
                 )
                 else -> SettingsPage(
@@ -1319,90 +1299,6 @@ private fun NoteActionButton(
     }
 }
 
-/**
- * 课表的「查看 / 编辑」模式切换按钮。
- *
- * 位置：右下角加号的正上方，和便签页「回撤」占同一个位置 —— 加号本身已经占了右下角，
- * 再往别处放反而离手指远。
- * 图标：查看模式（默认）是眼睛，点一下变铅笔进入编辑模式；尺寸和形状跟加号一致。
- */
-@Composable
-private fun TimetableModeButton(editMode: Boolean, onToggle: () -> Unit) {
-    // 容器底色 / 图标色跟着模式过渡，切模式时是「渐变」而不是「闪一下」
-    val containerColor by animateColorAsState(
-        targetValue = if (editMode) MaterialTheme.colorScheme.primary
-        else MaterialTheme.colorScheme.surface,
-        animationSpec = tween(ENTER_MS),
-        label = "modeBtnContainer"
-    )
-    val contentColor by animateColorAsState(
-        targetValue = if (editMode) MaterialTheme.colorScheme.onPrimary
-        else MaterialTheme.colorScheme.primary,
-        animationSpec = tween(ENTER_MS),
-        label = "modeBtnContent"
-    )
-    FloatingActionButton(
-        onClick = onToggle,
-        modifier = Modifier.border(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant,
-            shape = FloatingActionButtonDefaults.shape
-        ),
-        containerColor = containerColor,
-        contentColor = contentColor,
-        elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 3.dp)
-    ) {
-        // 眼睛 ↔ 铅笔：淡入淡出 + 缩放，图标不是「啪」地换掉
-        AnimatedContent(
-            targetState = editMode,
-            transitionSpec = {
-                (fadeIn(tween(ENTER_MS)) + scaleIn(tween(ENTER_MS), initialScale = 0.5f)) togetherWith
-                    (fadeOut(tween(EXIT_MS)) + scaleOut(tween(EXIT_MS), targetScale = 0.5f))
-            },
-            contentAlignment = Alignment.Center,
-            label = "modeIcon"
-        ) { editing ->
-            Icon(
-                imageVector = if (editing) Icons.Default.Edit else EyeIcon,
-                contentDescription = if (editing) "编辑模式：点课程直接编辑" else "查看模式：点课程只看详情",
-                modifier = Modifier.size(24.dp)
-            )
-        }
-    }
-}
-
-/** 「查看」图标（Material 官方 Visibility 的路径），手写省掉整个 material-icons-extended */
-private val EyeIcon: ImageVector by lazy {
-    ImageVector.Builder(
-        name = "Visibility",
-        defaultWidth = 24.dp,
-        defaultHeight = 24.dp,
-        viewportWidth = 24f,
-        viewportHeight = 24f
-    ).apply {
-        path(fill = SolidColor(Color.Black)) {
-            moveTo(12f, 4.5f)
-            curveTo(7f, 4.5f, 2.73f, 7.61f, 1f, 12f)
-            curveTo(2.73f, 16.39f, 7f, 19.5f, 12f, 19.5f)
-            curveTo(17f, 19.5f, 21.27f, 16.39f, 23f, 12f)
-            curveTo(21.27f, 7.61f, 17f, 4.5f, 12f, 4.5f)
-            close()
-            moveTo(12f, 17f)
-            curveTo(9.24f, 17f, 7f, 14.76f, 7f, 12f)
-            curveTo(7f, 9.24f, 9.24f, 7f, 12f, 7f)
-            curveTo(14.76f, 7f, 17f, 9.24f, 17f, 12f)
-            curveTo(17f, 14.76f, 14.76f, 17f, 12f, 17f)
-            close()
-            moveTo(12f, 9f)
-            curveTo(10.34f, 9f, 9f, 10.34f, 9f, 12f)
-            curveTo(9f, 13.66f, 10.34f, 15f, 12f, 15f)
-            curveTo(13.66f, 15f, 15f, 13.66f, 15f, 12f)
-            curveTo(15f, 10.34f, 13.66f, 9f, 12f, 9f)
-            close()
-        }
-    }.build()
-}
-
 /** 回撤按钮：只留图标；尺寸和形状与右下角的加号按钮完全一致，靠 Column 的 End 对齐到同一条右边线 */
 @Composable
 private fun UndoButton(onClick: () -> Unit) {
@@ -1633,9 +1529,6 @@ private val AXIS_LABEL_LIFT = 8.dp
 fun WeekGrid(
     classes: List<ClassEntity>,
     highlightDay: String?,
-    editMode: Boolean,
-    selectedId: Int?,
-    onSelect: (ClassEntity) -> Unit,
     onEdit: (ClassEntity) -> Unit
 ) {
     val span = remember(classes) { TimeAxis.spanOf(classes) }
@@ -1659,38 +1552,10 @@ fun WeekGrid(
         return
     }
 
-    // 查看模式下选中的那门课：把它的时段在纵轴上放大，其余时段等比例压缩（总高度不变）。
-    // 「变大」靠的是时间轴本身，而不是挤别的块来腾地方。
-    val focusTarget = remember(classes, selectedId) {
-        val target = selectedId?.let { id -> classes.firstOrNull { it.id == id } }
-        val from = target?.let { TimeAxis.minutesOf(it.startTime) }
-        val to = target?.let { TimeAxis.minutesOf(it.endTime) }
-        if (from != null && to != null && to > from) TimeAxis.Focus(from, to) else null
-    }
-    // 取消选中后 focusTarget 立刻变 null，但「收回去」的动画还得知道刚才放大的是哪一段，
-    // 所以单独留一份 heldFocus。progress 归零时映射本来就是线性的，留着这份焦点不会有副作用。
-    var heldFocus by remember { mutableStateOf<TimeAxis.Focus?>(null) }
-
-    // 把「放大」交给动画而不是开关：progress 从 0 涨到 1 时，时间轴从线性平滑推到分段线性，
-    // 于是选中的课是「长大」的，整列的课程块、格线、左侧刻度都跟着一起动。
-    val focusAnim = remember { Animatable(0f) }
-    LaunchedEffect(focusTarget) {
-        if (focusTarget == null) {
-            focusAnim.animateTo(0f, tween(EXIT_MS))
-        } else {
-            if (heldFocus != null && heldFocus != focusTarget) {
-                // 直接换一门课（A → B）：先把上一段收回去再展开新的。
-                // 收完时 progress 正好是 0（映射退化成线性），所以换焦点那一刻接得上、不会跳。
-                focusAnim.animateTo(0f, tween(EXIT_MS))
-            }
-            heldFocus = focusTarget
-            focusAnim.animateTo(1f, tween(ENTER_MS))
-        }
-    }
     // mapping 的读取点特意放在 BoxWithConstraints 里面：这样每帧被失效的只有网格这一层子组合，
     // WeekGrid 自己的函数体不会跟着重组（否则每帧要组合两遍：一遍本体 + 一遍网格内容）
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val mapping = TimeAxis.mappingOf(span, heldFocus, focusAnim.value)
+        val mapping = TimeAxis.mappingOf(span, null, 1f)
 
         // 空列折叠：只画本周有课的那几天，宽度让给有课的天。
         // 只有 1~2 天有课时不折叠，否则一两列撑满屏幕反而不像课表。
@@ -1888,9 +1753,6 @@ fun WeekGrid(
                             titleSize = titleSize,
                             roomSize = roomSize,
                             titleLines = titleLines,
-                            editMode = editMode,
-                            selectedId = selectedId,
-                            onSelect = onSelect,
                             onEdit = onEdit
                         )
                     }
@@ -1955,16 +1817,13 @@ private fun DayColumn(
     titleSize: TextUnit,
     roomSize: TextUnit,
     titleLines: Int,
-    editMode: Boolean,
-    selectedId: Int?,
-    onSelect: (ClassEntity) -> Unit,
     onEdit: (ClassEntity) -> Unit,
     modifier: Modifier = Modifier
 ) {
     // mapping 每次重组都是新对象，用 remember 反而每帧都要重算，直接算更省事（课程量很小）
     val placed = TimeAxis.layout(classes, mapping)
     val gridHeightPx = with(LocalDensity.current) { gridHeight.toPx() }
-    // 内容宽度 = 列宽 - 左右各 1dp 的 padding，和原来 BoxWithConstraints 量出来的 maxWidth 一致
+    // 内容宽度 = 列宽 - 左右各 1dp 的padding，和原来 BoxWithConstraints 量出来的 maxWidth 一致
     val contentWidth = (columnWidth - 2.dp).coerceAtLeast(0.dp)
     // 高亮底色淡入淡出：点列头切换高亮时不是「啪」地铺上一层
     val tint by animateColorAsState(
@@ -1973,10 +1832,6 @@ private fun DayColumn(
         animationSpec = tween(ENTER_MS),
         label = "dayHighlight"
     )
-    // 点击回调只依赖这几个参数，做成稳定实例，GridCell 才跳得过重组
-    val onCellClick = remember(editMode, onSelect, onEdit) {
-        { cls: ClassEntity -> if (editMode) onEdit(cls) else onSelect(cls) }
-    }
 
     Box(
         modifier = modifier
@@ -1988,9 +1843,6 @@ private fun DayColumn(
             }
     ) {
         placed.forEach { spot ->
-            val isSelected = spot.cls.id == selectedId
-            // 高度只由时间轴的比例决定——选中时「变大」已经由分段线性映射完成，
-            // 这里不再另加高度（两套机制叠加会让块和它自己的时间刻度对不上，尺寸也不可预测）
             val blockHeight = (gridHeight * spot.heightFraction).coerceAtLeast(MIN_BLOCK_HEIGHT)
             Box(
                 modifier = Modifier
@@ -2000,8 +1852,6 @@ private fun DayColumn(
                     )
                     .fillMaxWidth(spot.widthFraction)
                     .height(blockHeight)
-                    // 选中时抬到最上层，压住邻居也比被邻居压住好看
-                    .zIndex(if (isSelected) 1f else 0f)
             ) {
                 GridCell(
                     cls = spot.cls,
@@ -2012,8 +1862,7 @@ private fun DayColumn(
                     titleSize = titleSize,
                     roomSize = roomSize,
                     titleLines = titleLines,
-                    selected = isSelected,
-                    onClick = onCellClick
+                    onClick = onEdit
                 )
             }
         }
@@ -2042,17 +1891,10 @@ private fun GridCell(
     titleSize: TextUnit,
     roomSize: TextUnit,
     titleLines: Int,
-    selected: Boolean,
     onClick: (ClassEntity) -> Unit
 ) {
-    // 选中态：一条进度派生底色 / 描边 / 阴影。表格选中动画期间每帧都要重算，动画条数越少越稳
-    val selection = rememberSelectionProgress(selected)
     val baseContainer = if (cls.date.isNotEmpty()) MaterialTheme.colorScheme.secondaryContainer
     else MaterialTheme.colorScheme.surface
-    val containerColor = lerpColor(baseContainer, MaterialTheme.colorScheme.primaryContainer, selection)
-    val elevation = lerpDp(1.dp, 6.dp, selection)
-    val borderColor = lerpColor(Color.Transparent, MaterialTheme.colorScheme.primary, selection)
-    val borderWidth = lerpDp(0.dp, 1.5.dp, selection)
     // 块矮的时候逐级让位：先保课程名，再保教室，最后才轮到详情行（阈值判断在外层做，见 DayColumn）
 
     Card(
@@ -2060,9 +1902,9 @@ private fun GridCell(
             .fillMaxSize()
             .pressable(pressedScale = 0.95f) { onClick(cls) },
         shape = SHAPE_SMALL,
-        elevation = CardDefaults.cardElevation(defaultElevation = elevation),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
-        border = BorderStroke(borderWidth, borderColor)
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        colors = CardDefaults.cardColors(containerColor = baseContainer),
+        border = null
     ) {
         Column(
             modifier = Modifier
@@ -2075,12 +1917,12 @@ private fun GridCell(
                 fontSize = titleSize,
                 lineHeight = titleSize * 1.2f,
                 fontWeight = FontWeight.Medium,
-                maxLines = if (selected || showRoom) titleLines else 1,
+                maxLines = if (showRoom) titleLines else 1,
                 overflow = TextOverflow.Ellipsis
             )
-            // 详情在选中时淡入，收起时淡出（它高度为 0，不影响块的固定高度）
+            // 详情在块足够高时显示
             AnimatedVisibility(
-                visible = selected && showDetails,
+                visible = showDetails,
                 enter = fadeIn(tween(ENTER_MS)),
                 exit = fadeOut(tween(EXIT_MS))
             ) {
@@ -2305,13 +2147,10 @@ fun WeekView(
     shownWeek: Int,
     onShownWeekChange: (Int) -> Unit,
     onCalibrate: () -> Unit,
-    editMode: Boolean,
-    selectedId: Int?,
-    onSelect: (ClassEntity) -> Unit,
     onEdit: (ClassEntity) -> Unit,
     /**
      * 课表用哪种渲染：
-     *  - true  → 时间轴网格（实验性，支持点列头高亮 / 加宽、点课程放大）
+     *  - true  → 时间轴网格（实验性，支持点列头高亮 / 加宽）
      *  - false → v2.0 那版「按天分组、可折叠」的列表（[LegacyWeekView]）
      *
      * 两种渲染共用同一个 [WeekHeader]（切周 / 校准照旧可用），只是网格那支
@@ -2355,9 +2194,6 @@ fun WeekView(
                 mode = mode,
                 shownWeek = shownWeek,
                 today = today,
-                editMode = editMode,
-                selectedId = selectedId,
-                onSelect = onSelect,
                 onEdit = onEdit
             )
         } else {
@@ -2380,9 +2216,6 @@ private fun ExperimentalWeekContent(
     mode: WeekMode,
     shownWeek: Int,
     today: String,
-    editMode: Boolean,
-    selectedId: Int?,
-    onSelect: (ClassEntity) -> Unit,
     onEdit: (ClassEntity) -> Unit
 ) {
     // 内容的过渡同时管两件事，靠 transitionSpec 区分：
@@ -2421,17 +2254,11 @@ private fun ExperimentalWeekContent(
             WeekMode.GRID -> WeekGrid(
                 classes = visible,
                 highlightDay = dayHighlight,
-                editMode = editMode,
-                selectedId = selectedId,
-                onSelect = onSelect,
                 onEdit = onEdit
             )
             WeekMode.LIST -> WeekDayList(
                 classes = visible,
                 highlightDay = dayHighlight,
-                editMode = editMode,
-                selectedId = selectedId,
-                onSelect = onSelect,
                 onEdit = onEdit
             )
         }
@@ -2443,9 +2270,6 @@ private fun ExperimentalWeekContent(
 fun WeekDayList(
     classes: List<ClassEntity>,
     highlightDay: String?,
-    editMode: Boolean,
-    selectedId: Int?,
-    onSelect: (ClassEntity) -> Unit,
     onEdit: (ClassEntity) -> Unit
 ) {
     val grouped = classes.groupBy { it.dayOfWeek }
@@ -2520,8 +2344,7 @@ fun WeekDayList(
                                 WeekClassCard(
                                     cls = cls,
                                     isToday = isToday,
-                                    selected = cls.id == selectedId,
-                                    onClick = { if (editMode) onEdit(cls) else onSelect(cls) }
+                                    onClick = { onEdit(cls) }
                                 )
                             }
                             if (dayClasses.isEmpty()) {
@@ -2547,39 +2370,17 @@ fun WeekDayList(
 fun WeekClassCard(
     cls: ClassEntity,
     isToday: Boolean,
-    selected: Boolean,
     onClick: () -> Unit
 ) {
-    // 选中态（主色容器 + 加粗描边）和阴影都做过渡，点一下是渐变过去
-    // 选中态：一条进度派生底色 / 描边 / 阴影 / 放大，比每个属性各跑一条动画省得多
-    val selection = rememberSelectionProgress(selected)
-    val containerColor = lerpColor(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primaryContainer, selection)
-    val elevation = lerpDp(if (isToday) 2.dp else 0.dp, 4.dp, selection)
-    val borderColor = lerpColor(
-        if (isToday) Color.Transparent else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f),
-        MaterialTheme.colorScheme.primary,
-        selection
-    )
-    val borderWidth = lerpDp(if (isToday) 0.dp else 1.dp, 1.5.dp, selection)
-    // 选中时原地放大：graphicsLayer 不参与布局，所以卡片是「自己长大」而不是把上下两条推开
-    val selectedScale = 1f + (SELECTED_SCALE - 1f) * selection
-
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 3.dp)
-            // 放大后要盖住相邻的卡片，否则下半截会被下面那条压住
-            .zIndex(if (selected) 1f else 0f)
-            .graphicsLayer {
-                scaleX = selectedScale
-                scaleY = selectedScale
-            }
             .pressable(onClick = onClick),
         shape = SHAPE_CARD,
-        // 选中态用主色容器 + 加粗描边，和表格视图里的选中样式保持一致
-        colors = CardDefaults.cardColors(containerColor = containerColor),
-        elevation = CardDefaults.cardElevation(defaultElevation = elevation),
-        border = BorderStroke(borderWidth, borderColor)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isToday) 2.dp else 0.dp),
+        border = if (isToday) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)) else cardBorder()
     ) {
         Row(
             modifier = Modifier.padding(vertical = 11.dp),
