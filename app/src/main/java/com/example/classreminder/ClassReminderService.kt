@@ -11,14 +11,39 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import com.example.classreminder.data.AppDatabase
 import com.example.classreminder.data.ClassEntity
+import com.example.classreminder.data.TodaySchedule
+import com.example.classreminder.data.WeekSchedule
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.*
 
 class ClassReminderService : Service() {
     companion object {
         const val ACTION_CHECK_NOW = "com.example.classreminder.action.CHECK_NOW"
+        /** 前台常驻通知固定用 id 1（startForeground），提醒通知必须用别的 id，否则会互相覆盖 */
+        private const val FOREGROUND_NOTIFICATION_ID = 1
+        private const val ALERT_NOTIFICATION_ID = 2
+
+        // 用 StateFlow 暴露运行状态，UI 才能响应式刷新（普通 var 改了不会触发重组）
+        private val _running = MutableStateFlow(false)
+        val running: StateFlow<Boolean> = _running.asStateFlow()
+        var isRunning: Boolean
+            get() = _running.value
+            set(value) {
+                _running.value = value
+            }
     }
     private val channelId = "class_reminder_service"
-    private val notifChannelId = "class_reminder_alerts"
+    /**
+     * 提醒渠道。v2：原来那个渠道是静音的，在 ColorOS 这类「锁屏只显示图标/拦掉全屏弹窗」的系统上
+     * 等于完全没有提醒效果，所以换到带震动的新渠道（渠道属性创建后不可改，只能换 ID）。
+     * 声音保持关闭——上课时间响铃不合适，震动足够叫到人；想加声音可在系统通知设置里改。
+     */
+    private val notifChannelId = "class_reminder_alerts_v2"
+    private val legacyAlertChannelId = "class_reminder_alerts"
+    /** 跟启动器标签保持一致（debug 变体是 ClassReminder-test），两个应用同时装时才分得清 */
+    private val appLabel: String by lazy { applicationInfo.loadLabel(packageManager).toString() }
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
     private var future: ScheduledFuture<*>? = null
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -26,8 +51,9 @@ class ClassReminderService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
         createChannels()
-        startForegroundServiceWithNotification("ClassReminder", "运行中 — 监控课程提醒")
+        startForegroundServiceWithNotification(appLabel, "运行中 — 监控课程提醒")
 
         // Check every 30 seconds for an active/upcoming class
         future = scheduler.scheduleWithFixedDelay({
@@ -46,16 +72,43 @@ class ClassReminderService : Service() {
         }, 5, 30, TimeUnit.SECONDS)
     }
 
+    /**
+     * 亮屏提醒。用 PARTIAL_WAKE_LOCK + ACQUIRE_CAUSES_WAKEUP 把屏幕点亮一小会儿，
+     * 10 秒后自动释放（ON_AFTER_RELEASE 让屏幕再亮一会儿）。
+     * 这是从 Service 里唯一能唤醒屏幕的办法；起不起作用最终由 ROM 决定。
+     */
+    private fun wakeScreen() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            @Suppress("DEPRECATION")
+            val lock = pm.newWakeLock(
+                android.os.PowerManager.FULL_WAKE_LOCK
+                    or android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP
+                    or android.os.PowerManager.ON_AFTER_RELEASE,
+                "ClassReminder:alert"
+            )
+            lock.acquire(10_000L)
+        } catch (t: Throwable) {
+            t.printStackTrace()
+        }
+    }
+
     private fun createChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val svc = NotificationChannel(channelId, "ClassReminder Service", NotificationManager.IMPORTANCE_LOW)
             val nm = getSystemService(NotificationManager::class.java)
+
+            val svc = NotificationChannel(channelId, "ClassReminder Service", NotificationManager.IMPORTANCE_LOW)
             nm.createNotificationChannel(svc)
 
-            val alerts = NotificationChannel(notifChannelId, "Class Alerts", NotificationManager.IMPORTANCE_HIGH)
+            val alerts = NotificationChannel(notifChannelId, "上课提醒", NotificationManager.IMPORTANCE_HIGH)
             alerts.lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-            alerts.setSound(null, null)
+            alerts.setSound(null, null)          // 不响铃
+            alerts.enableVibration(true)         // 但必须震动，否则很多 ROM 上根本察觉不到
+            alerts.vibrationPattern = longArrayOf(0, 400, 200, 400)
             nm.createNotificationChannel(alerts)
+
+            // 清掉历史遗留的静音提醒渠道，避免在系统设置里留一个用不到的条目
+            nm.deleteNotificationChannel(legacyAlertChannelId)
         }
     }
 
@@ -65,20 +118,29 @@ class ClassReminderService : Service() {
             .setContentText(content)
             .setSmallIcon(com.example.classreminder.R.drawable.ic_notification_clock)
             .setOngoing(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
 
-        startForeground(1, notification)
+        startForeground(FOREGROUND_NOTIFICATION_ID, notification)
     }
 
-    private fun updateForegroundNotification(title: String, content: String) {
-        val notification = NotificationCompat.Builder(this, channelId)
+    /**
+     * 更新前台通知。
+     * [bigText] 是展开后（锁屏上滑一下）显示的今日剩余课程清单。
+     * VISIBILITY_PUBLIC 让内容在锁屏上直接可见，而不是"内容已隐藏"。
+     */
+    private fun updateForegroundNotification(title: String, content: String, bigText: String? = null) {
+        val builder = NotificationCompat.Builder(this, channelId)
             .setContentTitle(title)
             .setContentText(content)
             .setSmallIcon(com.example.classreminder.R.drawable.ic_notification_clock)
             .setOngoing(true)
-            .build()
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+        if (!bigText.isNullOrBlank()) {
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
+        }
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(1, notification)
+        nm.notify(FOREGROUND_NOTIFICATION_ID, builder.build())
     }
 
     private suspend fun checkAndNotify() {
@@ -86,84 +148,51 @@ class ClassReminderService : Service() {
         val db = AppDatabase.getInstance(applicationContext)
         val all = db.classDao().getAll()
 
-        val cal = java.util.Calendar.getInstance()
-        val todayName = when (cal.get(java.util.Calendar.DAY_OF_WEEK)) {
-            java.util.Calendar.SUNDAY -> "Sunday"
-            java.util.Calendar.MONDAY -> "Monday"
-            java.util.Calendar.TUESDAY -> "Tuesday"
-            java.util.Calendar.WEDNESDAY -> "Wednesday"
-            java.util.Calendar.THURSDAY -> "Thursday"
-            java.util.Calendar.FRIDAY -> "Friday"
-            else -> "Saturday"
-        }
+        val currentWeek = Prefs.currentWeek(applicationContext)
+        val todayClasses = TodaySchedule.today(all, currentWeek, now)
 
-        val todayClasses = all.filter { it.dayOfWeek == todayName }
-
-        data class Candidate(val entity: ClassEntity, val startMillis: Long, val endMillis: Long)
-
-        val candidates = todayClasses.mapNotNull { entry ->
-            val partsStart = entry.startTime.split(":")
-            val partsEnd = entry.endTime.split(":")
-            val sh = partsStart.getOrNull(0)?.toIntOrNull() ?: return@mapNotNull null
-            val sm = partsStart.getOrNull(1)?.toIntOrNull() ?: return@mapNotNull null
-            val eh = partsEnd.getOrNull(0)?.toIntOrNull() ?: return@mapNotNull null
-            val em = partsEnd.getOrNull(1)?.toIntOrNull() ?: return@mapNotNull null
-
-            val sCal = java.util.Calendar.getInstance().apply {
-                timeInMillis = System.currentTimeMillis()
-                set(java.util.Calendar.HOUR_OF_DAY, sh)
-                set(java.util.Calendar.MINUTE, sm)
-                set(java.util.Calendar.SECOND, 0)
-                set(java.util.Calendar.MILLISECOND, 0)
-            }
-            val eCal = java.util.Calendar.getInstance().apply {
-                timeInMillis = System.currentTimeMillis()
-                set(java.util.Calendar.HOUR_OF_DAY, eh)
-                set(java.util.Calendar.MINUTE, em)
-                set(java.util.Calendar.SECOND, 0)
-                set(java.util.Calendar.MILLISECOND, 0)
-            }
-
-            val startMillis = sCal.timeInMillis
-            var endMillis = eCal.timeInMillis
-            // if end before start, assume ends next day
-            if (endMillis <= startMillis) endMillis += 24L * 60L * 60L * 1000L
-
-            Candidate(entry, startMillis, endMillis)
-        }
-
-        val ongoing = candidates.filter { now in it.startMillis..it.endMillis }
+        val ongoing = todayClasses.filter { it.ongoingAt(now) }
         // read advance minutes from preferences (default 30)
         val advance = Prefs.getAdvanceMinutes(applicationContext)
         val upcomingWindow = advance * 60 * 1000L
-        val upcoming = candidates.filter { now >= (it.startMillis - upcomingWindow) && now < it.startMillis }
+        val upcoming = todayClasses.filter { it.startsWithin(now, upcomingWindow) }
 
         val chosen = when {
             ongoing.isNotEmpty() -> ongoing.maxByOrNull { it.startMillis }
             upcoming.isNotEmpty() -> upcoming.minByOrNull { it.startMillis }
             else -> null
         }
+        val remaining = TodaySchedule.remaining(todayClasses, now)
+        // 锁屏上展开通知时看到的今日剩余清单
+        val remainingList = remaining.take(5).joinToString("\n") {
+            "${formatTime(it.startMillis)}-${formatTime(it.endMillis)}  ${it.entity.title}" +
+                if (it.entity.room.isNotBlank()) "  ${it.entity.room}" else ""
+        }
 
         // Update the foreground notification to show detection status
         if (chosen != null) {
-            val prefix = if (now in chosen.startMillis..chosen.endMillis) "正在上课" else "即将上课"
+            val prefix = if (chosen.ongoingAt(now)) "正在上课" else "即将上课"
             updateForegroundNotification(
                 "$prefix：${chosen.entity.title}",
-                "${chosen.entity.room}  ${formatTime(chosen.startMillis)} - ${formatTime(chosen.endMillis)}"
+                "${chosen.entity.room}  ${formatTime(chosen.startMillis)} - ${formatTime(chosen.endMillis)}",
+                bigText = if (remainingList.isNotBlank()) "今日剩余：\n$remainingList" else null
             )
-        } else if (todayClasses.isNotEmpty()) {
-            // No class needs an alert right now, but there are classes today — show the overview
-            val next = todayClasses.minByOrNull { it.startTime }
-            val label = next?.let { "${it.title} ${it.startTime} ${it.room}" } ?: ""
-            updateForegroundNotification(
-                "ClassReminder — 今日 ${todayClasses.size} 节课",
-                "下一节：$label"
-            )
+        } else if (todayClasses.isEmpty()) {
+            updateForegroundNotification(appLabel, "运行中 — 今日无课")
+        } else if (remaining.isEmpty()) {
+            // 今天的课全部上完了
+            updateForegroundNotification("今日课程已全部结束！", "今天共 ${todayClasses.size} 节课")
         } else {
-            updateForegroundNotification("ClassReminder", "运行中 — 今日无课")
+            // 空闲时段：只报「今天还剩几节」，不是今天的总数
+            val next = remaining.first()
+            updateForegroundNotification(
+                "$appLabel — 今日剩余 ${remaining.size} 节课",
+                "下一节：${next.entity.title} ${formatTime(next.startMillis)} ${next.entity.room}",
+                bigText = "今日剩余：\n$remainingList"
+            )
         }
 
-        // ── 有课程需提醒：升级前台通知（高优先级 + 可选全屏弹窗） ──
+        // ── 有课程需提醒：发一条独立的高优先级提醒通知（可选全屏弹窗） ──
         if (chosen != null) {
             val id = chosen.entity.id
             if (lastShownId == id) return
@@ -178,12 +207,21 @@ class ClassReminderService : Service() {
             val showPopup = Prefs.getShowPopup(applicationContext)
             val prefix = if (now in chosen.startMillis..chosen.endMillis) "正在上课" else "即将上课"
 
-            // Build the same foreground notification but with HIGH priority
-            var builder = NotificationCompat.Builder(this, channelId)
+            // 先亮屏再发通知：ColorOS 会拦掉全屏弹窗，亮屏 + 高优先级通知是唯一还能用的提醒路径
+            wakeScreen()
+
+            // 提醒必须走 IMPORTANCE_HIGH 的 notifChannelId：Android 8+ 忽略 setPriority，
+            // 渠道重要性才决定通知能否打断免打扰、能否拉起全屏弹窗
+            var builder = NotificationCompat.Builder(this, notifChannelId)
                 .setContentTitle("$prefix：${chosen.entity.title}")
                 .setContentText("${chosen.entity.room}  ${formatTime(chosen.startMillis)} - ${formatTime(chosen.endMillis)}")
                 .setSmallIcon(com.example.classreminder.R.drawable.ic_notification_clock)
                 .setOngoing(true)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setContentIntent(PendingIntent.getActivity(this, 1002,
+                    Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                    else PendingIntent.FLAG_UPDATE_CURRENT))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_ALARM)
 
@@ -202,12 +240,14 @@ class ClassReminderService : Service() {
             }
 
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.notify(1, builder.build())
+            nm.notify(ALERT_NOTIFICATION_ID, builder.build())
 
             lastShownId = id
         } else {
-            // no candidate; reset lastShownId so future ones can show
+            // no candidate; reset lastShownId so future ones can show, and clear the alert
             lastShownId = null
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .cancel(ALERT_NOTIFICATION_ID)
         }
     }
 
@@ -222,6 +262,7 @@ class ClassReminderService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        isRunning = false
         future?.cancel(true)
         scheduler.shutdownNow()
         serviceScope.cancel()

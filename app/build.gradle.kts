@@ -15,6 +15,18 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+        // 应用名走占位符：debug 变体可以额外带 -test 后缀
+        manifestPlaceholders["appLabel"] = "ClassReminder"
+    }
+
+    buildTypes {
+        debug {
+            // 独立包名 + 独立应用名：装到手机上会和已安装的正式版共存，
+            // 不会覆盖它的数据、设置和正在运行的 Service
+            applicationIdSuffix = ".test"
+            versionNameSuffix = "-test"
+            manifestPlaceholders["appLabel"] = "ClassReminder-test"
+        }
     }
 
     buildFeatures {
@@ -35,7 +47,8 @@ dependencies {
     implementation(composeBom)
     implementation("androidx.activity:activity-compose:1.8.0")
     implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.material:material")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.ui:ui-tooling-preview")
 
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.1")
@@ -54,5 +67,8 @@ dependencies {
 
     // Notifications
     implementation("androidx.core:core-ktx:1.12.0")
+
+    // 课表 PDF 解析的单元测试（纯 JVM，不需要设备）
+    testImplementation("junit:junit:4.13.2")
 }
 

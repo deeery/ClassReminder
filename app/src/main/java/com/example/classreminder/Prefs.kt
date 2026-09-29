@@ -1,6 +1,7 @@
 package com.example.classreminder
 
 import android.content.Context
+import com.example.classreminder.data.WeekSchedule
 
 object Prefs {
     private const val NAME = "classreminder_prefs"
@@ -8,9 +9,18 @@ object Prefs {
     private const val KEY_AUTO_START = "auto_start"
     private const val KEY_SHOW_POPUP = "show_popup"
 
+    private const val DEFAULT_ADVANCE_MIN = 30
+    private const val MIN_ADVANCE_MIN = 1
+    private const val MAX_ADVANCE_MIN = 180
+
+    /**
+     * 提前提醒的时间窗（分钟）。这里是唯一的读取入口，统一夹到 1~180：
+     * 脏值（负数/超大）会让 Service 的「即将上课」判定要么永不命中、要么整周命中。
+     */
     fun getAdvanceMinutes(ctx: Context): Int {
         val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
-        return sp.getInt(KEY_ADVANCE_MIN, 30)
+        return sp.getInt(KEY_ADVANCE_MIN, DEFAULT_ADVANCE_MIN)
+            .coerceIn(MIN_ADVANCE_MIN, MAX_ADVANCE_MIN)
     }
 
     fun setAdvanceMinutes(ctx: Context, minutes: Int) {
@@ -59,6 +69,81 @@ object Prefs {
     fun setThemeMode(ctx: Context, mode: Int) {
         val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
         sp.edit().putInt(KEY_THEME_MODE, mode).apply()
+    }
+
+    // ── 周次校准 ────────────────────────────────────────────────────
+
+    private const val KEY_WEEK1_MONDAY = "week1_monday"
+
+    /** 第 1 周的周一（0 = 还没校准） */
+    fun getWeek1Monday(ctx: Context): Long {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        return sp.getLong(KEY_WEEK1_MONDAY, 0L)
+    }
+
+    fun setWeek1Monday(ctx: Context, mondayMillis: Long) {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        sp.edit().putLong(KEY_WEEK1_MONDAY, mondayMillis).apply()
+    }
+
+    /** 今天是第几周；没校准过返回 null（此时课表不按周次过滤） */
+    fun currentWeek(ctx: Context): Int? {
+        val week1Monday = getWeek1Monday(ctx)
+        return if (week1Monday == 0L) null
+        else WeekSchedule.weekNumber(week1Monday, System.currentTimeMillis())
+    }
+
+    // ── 界面状态（下次打开时接着上次看） ──────────────────────────────
+
+    private const val KEY_LAST_TAB = "last_tab"
+    private const val KEY_WEEK_GRID = "week_grid"
+
+    /**
+     * 上次停留的非设置页：0=列表，1=课表。
+     * 设置页（2）不记录，所以从设置页退出后仍会回到之前那个页面。
+     */
+    fun getLastTab(ctx: Context): Int {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        return sp.getInt(KEY_LAST_TAB, 0).coerceIn(0, 1)
+    }
+
+    fun setLastTab(ctx: Context, tab: Int) {
+        // 唯一的守卫放在这里：只记非设置页
+        if (tab !in 0..1) return
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        sp.edit().putInt(KEY_LAST_TAB, tab).apply()
+    }
+
+    /** 课表默认按表格还是列表显示 */
+    fun isWeekGrid(ctx: Context): Boolean {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        return sp.getBoolean(KEY_WEEK_GRID, false)
+    }
+
+    fun setWeekGrid(ctx: Context, grid: Boolean) {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        sp.edit().putBoolean(KEY_WEEK_GRID, grid).apply()
+    }
+
+    // ── 实验性功能 ──────────────────────────────────────────────────
+
+    private const val KEY_EXPERIMENTAL_GRID = "experimental_grid"
+
+    /**
+     * 实验性：时间轴网格课表。默认开。
+     *
+     * 关掉后课表改用 v2.0 那版「按天分组、可折叠」的列表渲染 ——
+     * 网格在点列头高亮 / 加宽那一处比较吃性能，低端机上会掉帧，
+     * 所以留一个开关让用户自己决定要不要用。
+     */
+    fun isExperimentalGrid(ctx: Context): Boolean {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        return sp.getBoolean(KEY_EXPERIMENTAL_GRID, true)
+    }
+
+    fun setExperimentalGrid(ctx: Context, enabled: Boolean) {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        sp.edit().putBoolean(KEY_EXPERIMENTAL_GRID, enabled).apply()
     }
 }
 

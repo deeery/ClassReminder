@@ -5,31 +5,33 @@ import android.os.Build
 import android.os.Bundle
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.viewModels
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.material.AlertDialog
-import androidx.compose.material.Text
-import androidx.compose.material.TextButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material.MaterialTheme
-import androidx.compose.material.Surface
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import com.example.classreminder.data.MainViewModel
 import com.example.classreminder.ui.ClassReminderTheme
 import com.example.classreminder.ui.MainScreen
 import com.example.classreminder.ui.ThemeMode
 
 class MainActivity : ComponentActivity() {
+    private val viewModel: MainViewModel by viewModels()
     private lateinit var requestPermissionLauncher: ActivityResultLauncher<String>
+    private lateinit var importPdfLauncher: ActivityResultLauncher<Array<String>>
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Hide the platform ActionBar so Compose TopAppBar is the only app bar
@@ -43,6 +45,14 @@ class MainActivity : ComponentActivity() {
                 startReminderService()
             } else {
                 Toast.makeText(this, "需要通知权限才能显示锁屏提醒", Toast.LENGTH_LONG).show()
+            }
+        }
+
+        // 课表 PDF 导入：选文件 → ViewModel 里读取/解析/入库，结果用 Toast 反馈
+        importPdfLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            viewModel.importTimetable(uri) { message ->
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
             }
         }
 
@@ -85,7 +95,7 @@ class MainActivity : ComponentActivity() {
             }
 
             ClassReminderTheme(themeMode = ThemeMode.entries.getOrElse(themeMode) { ThemeMode.FOLLOW_SYSTEM }) {
-                Surface(color = MaterialTheme.colors.surface) {
+                Surface(color = MaterialTheme.colorScheme.surface) {
                     // permission request lambdas
                     val requestNotification: () -> Unit = {
                         try {
@@ -137,14 +147,22 @@ class MainActivity : ComponentActivity() {
                         })
                     }
                     MainScreen(
-                        viewModel = viewModel(),
+                        viewModel = viewModel,
                         themeMode = themeMode,
                         onThemeModeChanged = { newMode ->
                             themeMode = newMode
                             Prefs.setThemeMode(this@MainActivity, newMode)
                         },
                         onRequestNotificationPermission = requestNotification,
-                        onOpenSettings = openAppSettings
+                        onOpenSettings = openAppSettings,
+                        onImportTimetable = {
+                            try {
+                                importPdfLauncher.launch(arrayOf("application/pdf"))
+                            } catch (t: Throwable) {
+                                t.printStackTrace()
+                                Toast.makeText(this@MainActivity, "没有可用的文件选择器", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     )
                 }
             }

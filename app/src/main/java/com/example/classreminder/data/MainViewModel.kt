@@ -1,26 +1,56 @@
 package com.example.classreminder.data
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val dao = AppDatabase.getInstance(application).classDao()
+    private val noteDao = AppDatabase.getInstance(application).noteDao()
 
     private val _classes = MutableStateFlow<List<ClassEntity>>(emptyList())
     val classes: StateFlow<List<ClassEntity>> = _classes.asStateFlow()
 
+    // ── 快速便签 ────────────────────────────────────────────────────
+
+    private val _notes = MutableStateFlow<List<NoteEntity>>(emptyList())
+    val notes: StateFlow<List<NoteEntity>> = _notes.asStateFlow()
+
+    /**
+     * 回撤栈：每次改动前压一份「改动前的整表快照」。
+     * 快照式撤销的好处是四种操作（增 / 改 / 删 / 拖动排序）共用一个回撤按钮，不用各写一套反向逻辑。
+     */
+    private val undoStack = ArrayDeque<List<NoteEntity>>()
+
+    private val _canUndo = MutableStateFlow(false)
+    val canUndo: StateFlow<Boolean> = _canUndo.asStateFlow()
+
+    /** 便签的写操作全部串行化：否则连点时快照可能基于过期的列表，回撤会撤错一步 */
+    private val noteMutex = Mutex()
+
     init {
         loadClasses()
+        loadNotes()
     }
 
     private fun loadClasses() {
         viewModelScope.launch {
             _classes.value = dao.getAll()
+        }
+    }
+
+    private fun loadNotes() {
+        viewModelScope.launch {
+            _notes.value = noteDao.getAll()
         }
     }
 
@@ -38,5 +68,163 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             dao.delete(entity)
             loadClasses()
         }
+    }
+
+    /**
+     * 从课表 PDF（教务系统导出的那种）导入。
+     * 已经是同一门课（标题/星期/起止时间都一样）的会覆盖，重复导入不会翻倍。
+     *
+     * @param onResult 给 UI 显示的一句话结果
+     */
+    fun importTimetable(uri: Uri, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val message = try {
+                val bytes = withContext(Dispatchers.IO) {
+                    getApplication<Application>().contentResolver
+                        .openInputStream(uri)?.use { it.readBytes() }
+                }
+                val parsed = withContext(Dispatchers.IO) {
+                    bytes?.let { TimetablePdfParser.parse(it) }.orEmpty()
+                }
+                when {
+                    bytes == null -> "读取不到所选文件"
+                    parsed.isEmpty() -> "这份 PDF 里没有识别到课程（只支持教务系统导出的课表）"
+                    else -> {
+                        insertAll(parsed)
+                        "已导入 ${parsed.size} 条课程；上课时间按默认作息推算，可在列表里逐条修改"
+                    }
+                }
+            } catch (t: Throwable) {
+                t.printStackTrace()
+                "导入失败：${t.message ?: t.javaClass.simpleName}"
+            }
+            onResult(message)
+        }
+    }
+
+    private suspend fun insertAll(courses: List<TimetablePdfParser.Course>) {
+        val existing = dao.getAll()
+        // 现有 id 都是毫秒时间戳量级，同一批导入共用一个基准再递增，保证批内不撞 id
+        val base = (System.currentTimeMillis() % Int.MAX_VALUE).toInt()
+        val takenIds = mutableSetOf<Int>()
+        courses.forEachIndexed { index, course ->
+            val match = existing.firstOrNull {
+                it.id !in takenIds &&
+                    it.title == course.title && it.dayOfWeek == course.dayOfWeek &&
+                    it.startTime == course.startTime && it.endTime == course.endTime
+            }
+            val id = match?.id ?: (base + index)
+            takenIds += id
+            dao.insert(course.toEntity(id))
+        }
+        loadClasses()
+    }
+
+    // ── 快速便签的增删改与排序 ────────────────────────────────────────
+
+    /**
+     * 便签的统一写入口：先在锁内压入「改动前的整表快照」，再执行 [op]，最后重新读一遍列表。
+     * 快照从数据库读，而不是读 _notes：首屏还没加载完就点添加时，_notes 可能是空的，
+     * 拿它当快照会让第一次回撤把已有便签清空。
+     */
+    private fun mutateNotes(op: suspend () -> Unit) {
+        viewModelScope.launch {
+            noteMutex.withLock {
+                undoStack.addLast(noteDao.getAll())
+                while (undoStack.size > MAX_UNDO_DEPTH) undoStack.removeFirst()
+                _canUndo.value = true
+                op()
+                _notes.value = noteDao.getAll()
+            }
+        }
+    }
+
+    /**
+     * 新增便签。
+     *
+     * [aboveNoteId] 能在库里找到时，新便签插到这条便签的**上方**（首页选中某条便签后新建就走这条路）；
+     * 传 null 或找不到就置顶。
+     *
+     * 插到中间后把 position 整体重写成 0..n-1，而不是取前后中点——反复往同一条上方插，
+     * 中点法几次就把整数空间耗光，重写则永远有位置可用（便签量很小，这点代价可以忽略）。
+     */
+    fun addNote(text: String, aboveNoteId: Int? = null) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        mutateNotes {
+            val current = noteDao.getAll()
+            val anchor = aboveNoteId?.let { id -> current.indexOfFirst { it.id == id } } ?: -1
+            val insertIndex = if (anchor >= 0) anchor else 0
+            val fresh = NoteEntity(
+                id = newNoteId(),
+                text = trimmed,
+                position = insertIndex,
+                createdAt = System.currentTimeMillis()
+            )
+            // 先落库：下面的 updateAll 只更新已存在的行，新行必须先存在
+            noteDao.insert(fresh)
+            val reordered = current.toMutableList().apply { add(insertIndex, fresh) }
+            noteDao.updateAll(reordered.mapIndexed { index, note -> note.copy(position = index) })
+        }
+    }
+
+    /** 改便签文字，顺序不动 */
+    fun updateNote(id: Int, text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        // 没改内容就别占一格回撤
+        if (_notes.value.firstOrNull { it.id == id }?.text == trimmed) return
+        mutateNotes {
+            val current = noteDao.getAll().firstOrNull { it.id == id } ?: return@mutateNotes
+            noteDao.insert(current.copy(text = trimmed))
+        }
+    }
+
+    fun deleteNote(id: Int) {
+        mutateNotes { noteDao.deleteById(id) }
+    }
+
+    /**
+     * 拖动排序：[fromIndex] → [toIndex]（都是当前列表里的下标）。
+     * 重排后把 position 整体重写成 0..n-1，避免长期累加后越界或撞车。
+     */
+    fun moveNote(fromIndex: Int, toIndex: Int) {
+        if (fromIndex == toIndex) return
+        mutateNotes {
+            val current = noteDao.getAll()
+            if (fromIndex !in current.indices || toIndex !in current.indices) return@mutateNotes
+            val reordered = current.toMutableList().apply { add(toIndex, removeAt(fromIndex)) }
+            noteDao.updateAll(reordered.mapIndexed { index, note -> note.copy(position = index) })
+        }
+    }
+
+    /**
+     * 回撤上一次便签操作。回撤本身不入栈——撤完还能继续往前撤，直到栈空按钮自动隐藏。
+     */
+    fun undoNote() {
+        viewModelScope.launch {
+            noteMutex.withLock {
+                val snapshot = undoStack.removeLastOrNull()
+                _canUndo.value = undoStack.isNotEmpty()
+                if (snapshot == null) return@withLock
+                // 整表替换：先清空再写快照，增删改排序四种情况都能还原
+                noteDao.deleteAll()
+                if (snapshot.isNotEmpty()) noteDao.insertAll(snapshot)
+                _notes.value = noteDao.getAll()
+            }
+        }
+    }
+
+    /** 毫秒级 id，并避开当前已有的 id，免得 REPLACE 把别人的便签顶掉 */
+    private fun newNoteId(): Int {
+        var id = (System.currentTimeMillis() % Int.MAX_VALUE).toInt()
+        val taken = _notes.value.mapTo(mutableSetOf()) { it.id }
+        while (id in taken) id++
+        return id
+    }
+
+    companion object {
+        /** 回撤栈深度上限：便签体积很小，留 50 步足够用，也不会一直占内存 */
+        private const val MAX_UNDO_DEPTH = 50
     }
 }
