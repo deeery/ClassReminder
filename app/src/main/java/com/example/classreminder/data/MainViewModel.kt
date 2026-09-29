@@ -156,7 +156,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * 插到中间后把 position 整体重写成 0..n-1，而不是取前后中点——反复往同一条上方插，
      * 中点法几次就把整数空间耗光，重写则永远有位置可用（便签量很小，这点代价可以忽略）。
      */
-    fun addNote(text: String, aboveNoteId: Int? = null) {
+    fun addNote(text: String, aboveNoteId: Int? = null, colorIndex: Int = DEFAULT_NOTE_COLOR) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
         mutateNotes {
@@ -167,7 +167,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 id = newNoteId(),
                 text = trimmed,
                 position = insertIndex,
-                createdAt = System.currentTimeMillis()
+                createdAt = System.currentTimeMillis(),
+                colorIndex = colorIndex.coerceIn(0, NOTE_COLOR_COUNT - 1)
             )
             // 先落库：下面的 updateAll 只更新已存在的行，新行必须先存在
             noteDao.insert(fresh)
@@ -176,15 +177,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 改便签文字，顺序不动 */
-    fun updateNote(id: Int, text: String) {
+    /**
+     * 改便签的文字和颜色，顺序不动。
+     *
+     * 文字为空时**只改颜色**、保留原文 —— 用户可能只想换个色号，
+     * 不该因为输入框被清空就丢掉内容（保存按钮的 enabled 也按这个语义来）。
+     */
+    fun updateNote(id: Int, text: String, colorIndex: Int) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
-        // 没改内容就别占一格回撤
-        if (_notes.value.firstOrNull { it.id == id }?.text == trimmed) return
+        val color = colorIndex.coerceIn(0, NOTE_COLOR_COUNT - 1)
+        val before = _notes.value.firstOrNull { it.id == id } ?: return
+        // 内容和颜色都没变就别占一格回撤
+        val nextText = trimmed.ifEmpty { before.text }
+        if (before.text == nextText && before.colorIndex == color) return
         mutateNotes {
             val current = noteDao.getById(id) ?: return@mutateNotes
-            noteDao.insert(current.copy(text = trimmed))
+            noteDao.insert(current.copy(text = nextText, colorIndex = color))
+        }
+    }
+
+    /** 只换色号。竖条即时预览之外，若单独调用也走这里 */
+    fun updateNoteColor(id: Int, colorIndex: Int) {
+        val color = colorIndex.coerceIn(0, NOTE_COLOR_COUNT - 1)
+        val before = _notes.value.firstOrNull { it.id == id } ?: return
+        if (before.colorIndex == color) return
+        mutateNotes {
+            val current = noteDao.getById(id) ?: return@mutateNotes
+            noteDao.insert(current.copy(colorIndex = color))
         }
     }
 

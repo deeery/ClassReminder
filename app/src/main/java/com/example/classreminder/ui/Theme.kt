@@ -6,6 +6,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 
 // ── 主题模式 ────────────────────────────────────────────────────
 
@@ -78,6 +79,58 @@ private val DarkColors = darkColorScheme(
     errorContainer = Color(0xFF8C1D18),
     onErrorContainer = Color(0xFFFCE8E6)
 )
+
+// ── 便签调色盘 ───────────────────────────────────────────────────
+//
+// 8 种可选颜色，按「色相环均匀铺开」排序：蓝 → 青 → 绿 → 黄 → 橙 → 红 → 紫 → 灰。
+// 第 0 格是**主题主色**（Google Blue），也就是便签竖条的原本颜色 ——
+// 这样调色盘里天然包含了「当前颜色」，用户想改回来有据可依。
+//
+// 浅色 / 深色各一套色值：同一个色相在深浅底上要分别调明度，
+// 浅色底用 600 档（够深、在白色卡片上看得清），深色底用 200 档（够亮、在深卡片上看得清）。
+// 这是 Material 3 的标准做法，也是 Google 各应用的颜色选择器的实际取法。
+
+/** 调色盘色号 → 浅色主题下的颜色 */
+private val NotePaletteLight = listOf(
+    Color(0xFF1A73E8),   // 0 Google Blue  600（= 主题主色，即原有竖条颜色）
+    Color(0xFF00838F),   // 1 Cyan         700
+    Color(0xFF188038),   // 2 Google Green 600
+    Color(0xFFF9AB00),   // 3 Google Yellow 600
+    Color(0xFFE8710A),   // 4 Orange       600
+    Color(0xFFD93025),   // 5 Google Red   600
+    Color(0xFF8430CE),   // 6 Purple       600
+    Color(0xFF5F6368)    // 7 Google Gray  700
+)
+
+/** 调色盘色号 → 深色主题下的颜色 */
+private val NotePaletteDark = listOf(
+    Color(0xFF8AB4F8),   // 0 Google Blue  200（= 深色主题主色）
+    Color(0xFF4DD0E1),   // 1 Cyan         300
+    Color(0xFF81C995),   // 2 Google Green 200
+    Color(0xFFFDD663),   // 3 Google Yellow 200
+    Color(0xFFFFB74D),   // 4 Orange       300
+    Color(0xFFF28B82),   // 5 Google Red   200
+    Color(0xFFD7AEFB),   // 6 Purple       200
+    Color(0xFF9AA0A6)    // 7 Google Gray  500
+)
+
+/**
+ * 取便签调色盘里的颜色。[index] 越界时收敛到 0，避免脏数据把 UI 打挂
+ * （颜色可能来自旧库或手改的备份文件）。
+ */
+@Composable
+fun notePaletteColor(index: Int): Color {
+    val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val palette = if (isDark) NotePaletteDark else NotePaletteLight
+    return palette[index.coerceIn(0, palette.lastIndex)]
+}
+
+/** 整个调色盘。调色盘 UI 用它铺格子，顺序即色号 */
+@Composable
+fun notePalette(): List<Color> {
+    val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    return if (isDark) NotePaletteDark else NotePaletteLight
+}
 
 // ── Theme Composable ─────────────────────────────────────────────
 

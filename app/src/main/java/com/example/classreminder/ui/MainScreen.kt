@@ -28,6 +28,7 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -49,6 +50,7 @@ import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
@@ -103,7 +105,9 @@ import androidx.compose.ui.zIndex
 import com.example.classreminder.ClassReminderService
 import com.example.classreminder.R
 import com.example.classreminder.data.ClassEntity
+import com.example.classreminder.data.DEFAULT_NOTE_COLOR
 import com.example.classreminder.data.MainViewModel
+import com.example.classreminder.data.NOTE_COLOR_COUNT
 import com.example.classreminder.data.NoteEntity
 import com.example.classreminder.data.TimeAxis
 import com.example.classreminder.data.TodaySchedule
@@ -385,6 +389,9 @@ private data class HighlightSpec(
          *   浏览多日课表时，一眼就能分出「这是今天选中的」和「这是别的天选中的」。
          * @param pressed 正被按住
          * @param hovering 正被悬停 / 聚焦
+         * @param accentColor 覆盖选中色（竖条 / 描边 / 光晕的色相来源）。传 null 走默认的
+         *   「今日=主色 / 非今日=中性灰」。便签用它把自己的调色盘颜色喂进来 ——
+         *   便签没有「今天」的概念，颜色完全由用户挑。
          */
         @Composable
         fun of(
@@ -394,17 +401,22 @@ private data class HighlightSpec(
             accent: Float = 0f,
             isToday: Boolean = true,
             pressed: Boolean = false,
-            hovering: Boolean = false
+            hovering: Boolean = false,
+            accentColor: Color? = null
         ): HighlightSpec {
             val scheme = MaterialTheme.colorScheme
             val primary = scheme.primary
             val isDark = scheme.surface.luminance() < 0.5f
 
-            // ── 选中态的主色：今日 = 蓝（primary），非今日 = 灰 ──
+            // ── 选中态的主色：显式色 > 今日=蓝（primary） > 非今日=灰 ──
             // 灰不能用 onSurface 调 α：深色下 surface 与 onSurface 只差 1.78:1，等于没铺。
             // 浅色走 outlineVariant 压深、深色走 surfaceVariant —— 都是「比背景深一档」的中性色，
             // 目的是让色条**可见但不抢眼**，把注意力留给真正今天的那个蓝条目。
-            val selectColor = if (isToday) primary else {
+            //
+            // explicitAccent：这一项的色相是调用方指定的（便签），不是「今天/非今天」那套。
+            // 后续几处分支靠它切换策略：便签的静息色条要更亮、底色不染主题蓝。
+            val explicitAccent = accentColor != null
+            val selectColor = accentColor ?: if (isToday) primary else {
                 if (isDark) scheme.surfaceVariant else scheme.outlineVariant
             }
 
@@ -421,7 +433,10 @@ private data class HighlightSpec(
             // ── 几何：按 level 在「未高亮 → 强」之间插值 ──
             // 竖条宽度还要再走一档：弱高亮（今天那一列）固定取「弱」的宽度，
             // 而不是跟着 level 滑动 —— 否则今天列会随着悬停 / 按下一起变宽，看起来像选中了
-            val idleBar = HL_BAR_WIDTH * BAR_W_IDLE
+            //
+            // 便签不同：它的色条是身份标识，静息态就取「强」档宽度，
+            // 不随选中变粗 —— 颜色已经是足够强的信号，再变宽会显得躁
+            val idleBar = HL_BAR_WIDTH * (if (explicitAccent) BAR_W_STRONG else BAR_W_IDLE)
             val strongBar = HL_BAR_WIDTH * BAR_W_STRONG
             val weakBar = HL_BAR_WIDTH * BAR_W_WEAK
             val barWidth = if (weak > 0.5f && selection < 0.01f) weakBar
@@ -444,7 +459,12 @@ private data class HighlightSpec(
             }
 
             // ── 竖条：未高亮只有在弱高亮时才显形；选中后换成纵向渐变（有光感、有方向）。
-            //    颜色跟随 selectColor —— 今日走蓝、非今日走灰 ──
+            //    颜色跟随 selectColor —— 今日走蓝、非今日走灰、便签走用户挑的色 ──
+            //
+            // 便签（显式色）的**静息态**要比课程块明显：课程块的色条平时是「装饰」，
+            // 而便签的色条就是这条便签的身份标识，用户专门挑了颜色，
+            // 平时就必须看得见（α 0.16 那种几乎等于没有）。
+            val idleAlpha = if (explicitAccent) 0.75f else 0.16f
             val barBrush: Brush = when {
                 level > 0.01f -> Brush.verticalGradient(
                     colors = listOf(
@@ -453,14 +473,15 @@ private data class HighlightSpec(
                     )
                 )
                 weak > 0f -> SolidColor(selectColor.copy(alpha = 0.30f))
-                else -> SolidColor(selectColor.copy(alpha = 0.16f))
+                else -> SolidColor(selectColor.copy(alpha = idleAlpha))
             }
 
             // ── 底色：选中时向 primaryContainer 混合。深色下的 primaryContainer(0xFF16406B)
             //    本身太暗，混 72% 也只比 surface 亮一点点，卡片「亮起来」几乎不可见 —— 所以调高比例。
             //    非今日不走 primaryContainer（那是蓝的），改用 selectColor 弱混 ——
-            //    灰条目的底只轻微加深一点，把「蓝 = 今天」这个信号独占给今日项 ──
-            val containerColor = if (isToday) {
+            //    灰条目的底只轻微加深一点，把「蓝 = 今天」这个信号独占给今日项。
+            //    便签同理：底子染自己的色号，而不是染成主题蓝 ──
+            val containerColor = if (isToday && !explicitAccent) {
                 lerpColor(
                     baseContainer,
                     primaryContainerFor(scheme, isDark),
@@ -478,7 +499,7 @@ private data class HighlightSpec(
             //    深色下如果让它去靠近 onPrimaryContainer(0xFFD6E4FF) 反而会**变亮**、和底色的
             //    对比不升反降，所以深色只轻微靠拢，靠底色变深来拉开对比。
             //    非今日不染蓝：保持原本的主文字色，靠色条和描边表达「选中」即可 ──
-            val titleColor = if (isToday) {
+            val titleColor = if (isToday && !explicitAccent) {
                 lerpColor(
                     baseTitle,
                     scheme.onPrimaryContainer,
@@ -497,7 +518,7 @@ private data class HighlightSpec(
                 // α 比主色光晕略收 —— 灰本身不抢眼，光晕太亮反而突兀
                 glowColor = selectColor.copy(
                     alpha = (if (isDark) GLOW_A_DARK else GLOW_A_LIGHT) * strong *
-                        (if (isToday) 1f else 0.7f)
+                        (if (isToday && !explicitAccent) 1f else 0.7f)
                 ),
                 containerColor = containerColor,
                 titleColor = titleColor
@@ -568,7 +589,8 @@ fun MainScreen(
     var searchQuery by remember { mutableStateOf("") }
     // 0=今天, 1=课表, 2=便签, 3=设置；启动时接着上次停留的非设置页
     var selectedTab by remember { mutableStateOf(Prefs.getLastTab(ctx)) }
-    // 「今天」页的日期副标题要跟着走字，所以这里也留一个每 30 秒刷新一次的「现在」。
+    // 「今天」页的顶栏要跟着走字：问候语（早上好 / 午安 / …）跨档时要自己换，
+    // 日期副标题也一样。所以这里留一个每 30 秒刷新一次的「现在」。
     // 和 TodayScreen 内部那份是分开的：顶栏属于 Scaffold，没法读 TodayScreen 的局部状态。
     var clockNow by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(selectedTab) {
@@ -616,24 +638,28 @@ fun MainScreen(
             // （文字布局缓存的 key 里带 constraints，高度变了就不复用），切页帧率就是这么掉的。
             // 改成随内容一起切换，代价只是没有折叠动画。
             if (selectedTab == 0) {
-                // ── 今天页：大标题 + 日期副标题 ──
-                // 副标题承载「9 月 29 日 周二 · 第 5 周」这类信息，
-                // 顶栏有一行小字，正文就不用再重复一遍日期。
+                // ── 今天页：问候语 + 日期副标题 ──
+                // 大标题不再写死「今天」，而是按当前时刻给问候语（早上好 / 午安 / …），
+                // 让首屏带一点人的语气。日期与周次仍放副标题，正文就不用再重复一遍。
+                //
+                // **顶栏整体比原先高**：大标题从 26sp 提到 28sp，上下内边距也各加了一档
+                // （top 8→12、bottom 10→14）。问候语比「今天」长（最长「早上好」3 个字），
+                // 行高要撑得住，同时留出足够的视觉呼吸区，避免大标题贴着状态栏。
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.surface)
                         .statusBarsPadding()
-                        .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 10.dp)
+                        .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 14.dp)
                 ) {
                     Text(
-                        text = "今天",
-                        fontSize = 26.sp,
-                        lineHeight = 32.sp,
+                        text = greetingFor(clockNow),
+                        fontSize = 28.sp,
+                        lineHeight = 36.sp,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    Spacer(Modifier.height(2.dp))
+                    Spacer(Modifier.height(4.dp))
                     Text(
                         text = todaySubtitle(currentWeek, clockNow),
                         fontSize = 12.sp,
@@ -871,10 +897,10 @@ fun MainScreen(
                     notes = filteredNotes,
                     searching = searchQuery.isNotBlank(),
                     selectedId = selectedNote?.id,
-                    onSelect = { note ->
-                        // 再点一次同一条就取消选中
-                        selectedNoteId = if (selectedNoteId == note.id) null else note.id
-                    },
+                    // 「按下就亮」用这个：**幂等**，只负责点亮，不会取消选中。
+                    // 因为 onPress 和 onTap 都会调它，若它带 toggle 语义，
+                    // 一次单击里 press 选中、tap 又取消，等于白点（这是修复前的 bug）。
+                    onSelect = { picked -> selectedNoteId = picked.id },
                     onDeselect = { selectedNoteId = null },
                     onEdit = { editingNote = it },
                     onDelete = { note ->
@@ -976,9 +1002,9 @@ fun MainScreen(
     if (addingNote) {
         NoteEditDialog(
             initial = null,
-            onSave = { text ->
+            onSave = { text, colorIndex ->
                 // 有高亮选中的便签就插到它上方，否则照旧置顶
-                viewModel.addNote(text, aboveNoteId = selectedNote?.id)
+                viewModel.addNote(text, aboveNoteId = selectedNote?.id, colorIndex = colorIndex)
                 addingNote = false
             },
             onDismiss = { addingNote = false }
@@ -988,8 +1014,9 @@ fun MainScreen(
     editingNote?.let { target ->
         NoteEditDialog(
             initial = target,
-            onSave = { text ->
-                viewModel.updateNote(target.id, text)
+            onSave = { text, colorIndex ->
+                // 文字留空 = 只想换色：updateNote 内部会保留原文
+                viewModel.updateNote(target.id, text, colorIndex)
                 editingNote = null
             },
             onDismiss = { editingNote = null }
@@ -1280,6 +1307,9 @@ fun NoteListView(
     var dragStartOffset by remember { mutableStateOf(0) }
     // 同一时间只允许一栏处于「已划开、露出编辑按钮」的状态
     var revealedId by remember { mutableStateOf<Int?>(null) }
+    // 外层 LazyColumn 的空白点击要「取消选中」。它挂在容器上、生命周期很长，
+    // 用 rememberUpdatedState 保证读到的是最新的 onDeselect（见下面 pointerInput 的注释）
+    val currentOnDeselectEmpty by rememberUpdatedState(onDeselect)
 
     // 被拖行的视觉位移 = 期望位置 - 它当前实际的布局位置。
     // 中途换了下标（排序真的生效了）时两者一起变，所以行不会跳一下。
@@ -1289,73 +1319,99 @@ fun NoteListView(
             ?: 0
     } ?: 0
 
-    LazyColumn(
-        state = listState,
-        modifier = Modifier
-            .fillMaxSize()
-            // 点空白处取消选中。便签自己会把点击消费掉，所以这里只接住「没人要的」点击
-            .pointerInput(Unit) {
-                detectTapGestures { onDeselect() }
-            },
-        contentPadding = PaddingValues(
-            top = 4.dp,
-            // 选中时左下角会浮出操作区，给列表底部留出避让空间，别把最后一条压住
-            bottom = if (selectedId != null) 84.dp else 4.dp
-        )
-    ) {
-        itemsIndexed(notes, key = { _, note -> note.id }) { index, note ->
-            val isDragging = draggingIndex == index
-            NoteRow(
-                note = note,
-                dragging = isDragging,
-                selected = selectedId == note.id,
-                dragOffsetY = if (isDragging) draggedOffset else 0,
-                revealed = revealedId == note.id,
-                onSelect = { onSelect(note) },
-                onReveal = { revealedId = note.id },
-                onClose = { if (revealedId == note.id) revealedId = null },
-                // 搜索时列表是过滤后的子集，下标和整表对不上，这时不开放拖动
-                onDragStart = {
-                    if (!searching) {
-                        draggingIndex = index
-                        dragDelta = 0f
-                        dragStartOffset = listState.layoutInfo.visibleItemsInfo
-                            .firstOrNull { it.index == index }?.offset ?: 0
-                    }
-                },
-                onDrag = { deltaY ->
-                    val current = draggingIndex ?: return@NoteRow
-                    dragDelta += deltaY
-                    // 用「这一行当前的中心点」落在谁身上，来决定换到哪个下标
-                    val info = listState.layoutInfo.visibleItemsInfo
-                        .firstOrNull { it.index == current } ?: return@NoteRow
-                    val center = dragStartOffset + dragDelta + info.size / 2f
-                    val target = listState.layoutInfo.visibleItemsInfo.firstOrNull {
-                        it.index != current && center >= it.offset && center <= it.offset + it.size
-                    }
-                    if (target != null) {
-                        onMove(current, target.index)
-                        draggingIndex = target.index
-                    }
-                },
-                onDragStop = {
-                    draggingIndex = null
-                    dragDelta = 0f
-                },
-                onEdit = { onEdit(note) },
-                onDelete = { onDelete(note) },
-                modifier = Modifier
-                    // 被拖的那行不参与位移动画，否则会和手指位移打架
-                    .then(if (isDragging) Modifier else Modifier.animateItemPlacement())
-                    // 选中项会原地放大，抬到上层才不会被下面那条压住
-                    .zIndex(
-                        when {
-                            isDragging -> 2f
-                            selectedId == note.id -> 1f
-                            else -> 0f
+    // ── 「点空白处取消选中」 ──
+    //
+    // 这个手势和便签卡片自己的 detectTapGestures 是两条**互不感知**的支路：
+    // Compose 里 ancestor 与 descendant 的 tap 不会自动互相让路，两边都会收到同上一次点击。
+    // 结果就是「卡片 onPress 选中 → 空白手势 300ms 后 deselect」，一次单击净效果为零，
+    // 表现为「点便签完全没反应」。
+    //
+    // 试过两条路都不行：
+    //   1). 把 deselect 挪到「底层兄弟 Box」—— matchParentSize 铺满，
+    //       命中和卡片重叠，照样吃掉点击；
+    //   2). 在卡片 onPress 里 consume(down) —— 但 detectTapGestures 的 onPress
+    //       回调签名是 (Offset) -> Unit，拿不到 PointerInputChange，无从 consume。
+    //
+    // 最终采用**落点命中判定**：deselect 拿到按下坐标后，先问 LazyColumn
+    // 「这个 y 是否落在某条便签的范围内」。落在卡片上 → 这次点击归卡片，自己不动；
+    // 落在真正的空白处 → 才取消选中。判定依据是 layoutInfo 的实际几何，不靠时序博弈。
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures { offset ->
+                        // 命中任一便签行的纵向范围（行本身已含 4dp 上下内边距）就不处理。
+                        // visibleItemsInfo[].offset 与 detectTapGestures 的 Offset 同在
+                        // LazyColumn 的坐标系里（都含 contentPadding 的顶偏移），可直接比较。
+                        val hitNote = listState.layoutInfo.visibleItemsInfo.any { info ->
+                            offset.y >= info.offset && offset.y <= info.offset + info.size
                         }
-                    )
+                        if (!hitNote) currentOnDeselectEmpty()
+                    }
+                },
+            contentPadding = PaddingValues(
+                top = 4.dp,
+                // 选中时左下角会浮出操作区，给列表底部留出避让空间，别把最后一条压住
+                bottom = if (selectedId != null) 84.dp else 4.dp
             )
+        ) {
+            itemsIndexed(notes, key = { _, note -> note.id }) { index, note ->
+                val isDragging = draggingIndex == index
+                NoteRow(
+                    note = note,
+                    dragging = isDragging,
+                    selected = selectedId == note.id,
+                    dragOffsetY = if (isDragging) draggedOffset else 0,
+                    revealed = revealedId == note.id,
+                    onSelect = { onSelect(note) },
+                    onReveal = { revealedId = note.id },
+                    onClose = { if (revealedId == note.id) revealedId = null },
+                    onDeselect = onDeselect,
+                    // 搜索时列表是过滤后的子集，下标和整表对不上，这时不开放拖动
+                    onDragStart = {
+                        if (!searching) {
+                            draggingIndex = index
+                            dragDelta = 0f
+                            dragStartOffset = listState.layoutInfo.visibleItemsInfo
+                                .firstOrNull { it.index == index }?.offset ?: 0
+                        }
+                    },
+                    onDrag = { deltaY ->
+                        val current = draggingIndex ?: return@NoteRow
+                        dragDelta += deltaY
+                        // 用「这一行当前的中心点」落在谁身上，来决定换到哪个下标
+                        val info = listState.layoutInfo.visibleItemsInfo
+                            .firstOrNull { it.index == current } ?: return@NoteRow
+                        val center = dragStartOffset + dragDelta + info.size / 2f
+                        val target = listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                            it.index != current && center >= it.offset && center <= it.offset + it.size
+                        }
+                        if (target != null) {
+                            onMove(current, target.index)
+                            draggingIndex = target.index
+                        }
+                    },
+                    onDragStop = {
+                        draggingIndex = null
+                        dragDelta = 0f
+                    },
+                    onEdit = { onEdit(note) },
+                    onDelete = { onDelete(note) },
+                    modifier = Modifier
+                        // 被拖的那行不参与位移动画，否则会和手指位移打架
+                        .then(if (isDragging) Modifier else Modifier.animateItemPlacement())
+                        // 选中项会原地放大，抬到上层才不会被下面那条压住
+                        .zIndex(
+                            when {
+                                isDragging -> 2f
+                                selectedId == note.id -> 1f
+                                else -> 0f
+                            }
+                        )
+                )
+            }
         }
     }
 }
@@ -1379,6 +1435,7 @@ private fun NoteRow(
     onSelect: () -> Unit,
     onReveal: () -> Unit,
     onClose: () -> Unit,
+    onDeselect: () -> Unit,
     onDragStart: () -> Unit,
     onDrag: (Float) -> Unit,
     onDragStop: () -> Unit,
@@ -1389,22 +1446,29 @@ private fun NoteRow(
     // drawBehind / pointerInput 的 lambda 都不是 @Composable，颜色得先取出来
     val scope = rememberCoroutineScope()
     val pressInteraction = remember { MutableInteractionSource() }
+    // 这一条便签自己的竖线颜色（用户从调色盘选的）。**色相锚定它**，
+    // 选中 / 悬停 / 按下只调制明度与宽度，不换色 —— 否则一选中就变蓝，
+    // 用户挑的颜色就白挑了。
+    val noteColor = notePaletteColor(note.colorIndex)
     // 选中态：一条进度派生全部属性（底色 / 色条 / 文字 / 描边 / 放大），拖动和按下另算
     val selection = rememberSelectionProgress(selected)
     // 悬停 / 按下也走同一套高亮语言：桌面端移上来就提前亮，点下去再亮一档
     val hover = rememberHoverProgress(pressInteraction)
     val pressed by pressInteraction.collectIsPressedAsState()
     // 底色 / 文字色 / 描边 / 色条全部由 HighlightSpec 统一算 —— 和课表卡片同一份配方，
-    // 所以两个列表的「选中」看起来是同一套东西，而不是各写各的
+    // 所以两个列表的「选中」看起来是同一套东西，而不是各写各的。
+    // 便签把 accent 传成自己的色号：色条与光晕都跟着它走。
     val spec = HighlightSpec.of(
         baseContainer = MaterialTheme.colorScheme.surface,
         baseTitle = MaterialTheme.colorScheme.onSurface,
         selection = selection,
+        accentColor = noteColor,
         pressed = pressed,
         hovering = hover > 0.5f
     )
     val containerColor = spec.containerColor
     val textColor = spec.titleColor
+    // 拖动中不画描边（卡片在手指下、外框会晃），其余交给 spec
     // 拖动中不画描边（卡片在手指下、外框会晃），其余交给 spec
     val borderColor = if (dragging) Color.Transparent else spec.borderColor
     val borderWidth = if (dragging) 0.dp else spec.borderWidth
@@ -1455,6 +1519,11 @@ private fun NoteRow(
     val currentOnEdit by rememberUpdatedState(onEdit)
     val currentOnReveal by rememberUpdatedState(onReveal)
     val currentOnClose by rememberUpdatedState(onClose)
+    val currentOnDeselect by rememberUpdatedState(onDeselect)
+    // onTap 里要读「当前是不是已选中」。pointerInput 的 block 只在 key(note.id)
+    // 变化时重建，直接闭包捕获 selected 会永远停在创建那一刻的值 —— 必须包一层。
+    val currentSelected by rememberUpdatedState(selected)
+    val currentOnSelect by rememberUpdatedState(onSelect)
 
     /** 平滑吸附到某个横向偏移 */
     fun settleTo(target: Float) {
@@ -1546,7 +1615,53 @@ private fun NoteRow(
                     scaleX = s
                     scaleY = s
                 }
-                .pointerInput(note.id) {
+                // 单击 → 选中（高亮）；双击 → 进编辑。和课表的课程块同一套语义。
+                //
+                // 必须用 detectTapGestures 而不是「clickable + 另一个 clickable」：
+                // 后者在双击时会先触发两次单击（高亮闪两下再进编辑），语义和手感都不对。
+                // detectTapGestures 自带双击判定窗口，onTap 会**等一个双击超时**后确认，
+                // 带来约 300ms 的反馈延迟 —— 这是双击语义的固有代价，无法两全。
+                //
+                // 补偿办法和课表一致：把「第一次点下就高亮」放进 onPress，
+                // 手指按下的当帧就亮起来，不必等判定窗口关闭。
+                //
+                // **位置很关键：这个 pointerInput 必须排在其他手势之前（更外层）。**
+                // 下面还有左滑 / 长按拖动两个 pointerInput，它们一按下就会各自
+                // awaitFirstDown 并抢占事件；把点击判定放在最外层，才能保证
+                // 「轻点」这条路径先被识别到。
+                .pointerInput("tap", note.id) {
+                    // 「这次按下之前是不是已经选中」——必须在 onPress 里**先**记下来。
+                    //
+                    // 不能等到 onTap 再看 selected：onPress 已经在按下当帧把它点亮了，
+                    // 等 300ms 后 onTap 执行时读到的必然是 true，于是「点第一下」也会
+                    // 被误判成「点第二下」而立刻取消选中 —— 表现出来就是点了完全没反应。
+                    // 所以这里用 pressedWhileSelected 保存按下瞬间的状态快照，
+                    // onTap 只依据这份快照决定「取消」还是「保持」。
+                    var wasSelectedAtPress = false
+                    detectTapGestures(
+                        // 单击：按下前若已选中 → 这次点击是「再点一次」，取消选中。
+                        // 否则不动 —— onPress 已经把高亮点亮了，无需重复。
+                        onTap = {
+                            if (wasSelectedAtPress) currentOnDeselect()
+                        },
+                        onDoubleTap = { currentOnEdit() },
+                        onPress = {
+                            // 在点亮**之前**读取，拿到的才是真正的「按下前状态」
+                            wasSelectedAtPress = currentSelected
+                            // 第一次点下就高亮：onTap 要等双击判定窗口关闭才回调，
+                            // 那段时间里卡片毫无反应，手感很木。
+                            // onSelect 必须幂等（上层已改成「只点亮、不 toggle」）。
+                            currentOnSelect()
+                            // 把按下转发给 interaction，按下缩小 / 悬停高亮保持原样。
+                            // 这里只做「转发」，不消费事件，双击仍能被识别
+                            val press = PressInteraction.Press(it)
+                            pressInteraction.emit(press)
+                            tryAwaitRelease()
+                            pressInteraction.emit(PressInteraction.Release(press))
+                        }
+                    )
+                }
+                .pointerInput("swipe", note.id) {
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
@@ -1586,7 +1701,7 @@ private fun NoteRow(
                         onDragCancel = { settleTo(0f) }
                     )
                 }
-                .pointerInput(note.id) {
+                .pointerInput("longpress", note.id) {
                     detectDragGesturesAfterLongPress(
                         onDragStart = { currentOnDragStart() },
                         onDrag = { change, amount ->
@@ -1597,10 +1712,20 @@ private fun NoteRow(
                         onDragCancel = { currentOnDragStop() }
                     )
                 }
-                .clickable(
-                    interactionSource = pressInteraction,
-                    indication = LocalIndication.current
-                ) { onSelect() },
+                // ── 交互反馈只保留「悬停」这一条通道 ──
+                //
+                // 这里**不能**用 clickable：clickable 内部的 detectTapAndPress 会在
+                // Main pass 的最内层抢先 awaitFirstDown() 并把 down 事件 consume 掉，
+                // 于是外层 detectTapGestures 的 awaitFirstDown(requireUnconsumed = true)
+                // 拿不到未被消费的 down，onTap / onDoubleTap / onPress 全部不触发 ——
+                // 表现就是「点便签完全没反应」。clickable 的 onClick 哪怕留空也照样消费。
+                //
+                // 便签需要的只是「悬停 / 按下」的外观反馈，这两者都来自
+                // MutableInteractionSource 上的 交互事件，而非 clickable 本身：
+                //   * 悬停 → hoverable 负责 emit，它只监听 hover、不碰 down 事件
+                //   * 按下 → 上面 detectTapGestures 的 onPress 里手动 emit（已经写了）
+                // 所以用 hoverable 替掉 clickable，既保住反馈又不抢手势。
+                .hoverable(interactionSource = pressInteraction),
             shape = SHAPE_CARD,
             colors = CardDefaults.cardColors(containerColor = containerColor),
             elevation = CardDefaults.cardElevation(defaultElevation = elevation),
@@ -1690,7 +1815,7 @@ fun EmptyNotes(searching: Boolean, onAdd: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                     )
                     Spacer(Modifier.height(20.dp))
-                    Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) { Text("添加项目") }
+                    Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) { Text("写一条便签") }
                 }
             }
         }
@@ -1785,38 +1910,121 @@ private val UndoIcon: ImageVector by lazy {
     }.build()
 }
 
-/** 添加 / 编辑便签 */
+/**
+ * 添加 / 编辑便签。
+ *
+ * 编辑时额外给一条**调色盘**：8 个色块 + 当前选中打勾。
+ * 调色盘第一格是便签原本的竖线颜色（主题主色），所以「改回默认」也有据可依。
+ *
+ * [onSave] 同时回传文字与色号；文字为空时由上层决定是否沿用原文（只改色的场景）。
+ */
 @Composable
 fun NoteEditDialog(
     initial: NoteEntity? = null,
-    onSave: (String) -> Unit,
+    onSave: (String, Int) -> Unit,
     onDismiss: () -> Unit
 ) {
     var text by remember { mutableStateOf(initial?.text.orEmpty()) }
+    // 当前选中的色号。打开时落在便签自己的颜色上；新建则是默认色
+    var colorIndex by remember { mutableIntStateOf(initial?.colorIndex ?: DEFAULT_NOTE_COLOR) }
     val focusRequester = remember { FocusRequester() }
     // 打开就聚焦，「随手记一条」不用再点一下输入框
     LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
 
+    val palette = notePalette()
+    val editing = initial != null
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "添加项目" else "编辑便签") },
+        title = { Text(if (editing) "编辑便签" else "添加便签") },
         text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                label = { Text("内容") },
-                maxLines = 6,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 96.dp)
-                    .focusRequester(focusRequester)
-            )
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    // 新建时给一句实在的引导，比光秃秃的「内容」更能提示该写什么
+                    label = { Text("便签内容") },
+                    placeholder = { Text(if (editing) "" else "写点什么，例如「周五前交实验报告」") },
+                    maxLines = 6,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 96.dp)
+                        .focusRequester(focusRequester)
+                )
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "颜色",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                NoteColorPicker(
+                    colors = palette,
+                    selectedIndex = colorIndex,
+                    onSelect = { colorIndex = it }
+                )
+            }
         },
         confirmButton = {
-            Button(onClick = { onSave(text) }, enabled = text.isNotBlank()) { Text("保存") }
+            // 文字留空时仍可保存 —— 上层会保留原文、只改颜色。
+            // 新建便签没有原文，所以那种情况下仍要求非空
+            Button(
+                onClick = { onSave(text, colorIndex) },
+                enabled = editing || text.isNotBlank()
+            ) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
+}
+
+/**
+ * 便签调色盘：8 个圆形色块一行铺开，选中的那格套一圈描边 + 中心打勾。
+ *
+ * 打勾用**白色还是黑色**按色块自身的亮度决定 —— 黄色底上白勾几乎看不见，
+ * 必须走深色。这是对比度 ≥ 3:1 的最低要求，也是 Material 颜色选择器的做法。
+ */
+@Composable
+private fun NoteColorPicker(
+    colors: List<Color>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        colors.forEachIndexed { index, color ->
+            val selected = index == selectedIndex
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .aspectRatio(1f)
+                    // 先给圆角方块留出描边空间，再画底色 —— 描边不会把色块挤小
+                    .clip(CircleShape)
+                    .background(color)
+                    .then(
+                        if (selected) {
+                            Modifier.border(
+                                width = 2.dp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                                shape = CircleShape
+                            )
+                        } else Modifier
+                    )
+                    .clickable { onSelect(index) },
+                contentAlignment = Alignment.Center
+            ) {
+                if (selected) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = "已选颜色 $index",
+                        modifier = Modifier.size(16.dp),
+                        tint = if (color.luminance() > 0.55f) Color(0xFF1F1F1F) else Color.White
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable

@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [ClassEntity::class, NoteEntity::class], version = 5, exportSchema = false)
+@Database(entities = [ClassEntity::class, NoteEntity::class], version = 6, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun classDao(): ClassDao
     abstract fun noteDao(): NoteDao
@@ -58,14 +58,29 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        fun getInstance(context: Context): AppDatabase {
-            return INSTANCE ?: synchronized(this) {
+        /**
+         * v5 → v6：便签支持自定义竖线颜色。存的是调色盘下标，不是 ARGB。
+         *
+         * 用 ALTER TABLE 加列并给默认值 0，**老便签一条都不丢**，
+         * 且升级后颜色统一落在调色盘第一格。
+         * 这一列必须和 NoteEntity 的声明完全一致（INTEGER NOT NULL + 默认值），
+         * 否则 Room 打开库时 schema 校验会失败。
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE notes ADD COLUMN colorIndex INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
+        fun getInstance(context: Context): AppDatabase {            return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "class_reminder_db"
                 )
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
