@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      ClassReminder 的应用主题。
+
+      **为什么必须显式声明**：原来 manifest 里没写 android:theme，走的是平台默认主题，
+      于是 Android 12+ 的 Splash Screen 走默认行为 —— 闪屏的退出动画
+      （SurfaceFlinger 里的 `window_animation` leash）由系统动画驱动。
+      在模拟器上遇到过这条 leash 永远停在 alpha=0 的情况：
+      闪屏层一直可见、把 Activity 盖在下面，用户看到的就是「黑屏 / 只显示图标」。
+      而且此时应用其实已经画好了（window 状态是 HAS_DRAWN、opaque=1），
+      排查起来非常费劲 —— 日志里没有任何异常。
+
+      显式声明主题后：
+        1. windowBackground 直接给应用底色，闪屏一撤就是正确背景，不再是突兀的黑/白；
+        2. windowSplashScreenAnimationDuration = 0 → 闪屏不做退出动画，立即让位，
+           不再依赖系统动画能不能跑完。
+
+      注意 compileSdk = 34，`windowSplashScreenAnimationDuration` 等属性需要
+      android: 前缀（API 31+ 才有），低版本系统会自动忽略。
+    -->
+    <style name="Theme.ClassReminder" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- 窗口底色 = 应用背景色（lightColorScheme.background = Google Gray 50）
+             这样启动瞬间和首帧之间不会有闪白/闪黑 -->
+        <item name="android:windowBackground">@color/app_background</item>
+
+        <!-- 状态栏：跟 MainActivity 里的 WindowInsetsControllerCompat 保持一致，
+             浅色主题下用亮色状态栏图标 -->
+        <item name="android:statusBarColor">@color/app_surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+
+        <!-- Android 12+ Splash Screen：不做退出动画，闪屏立即让位。
+             这是绕开「模拟器动画卡住导致闪屏不消失」的关键一条 -->
+        <item name="android:windowSplashScreenAnimationDuration">0</item>
+        <item name="android:windowSplashScreenBackground">@color/app_background</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/app_background</item>
+    </style>
+
+    <!-- 深色主题：底色换成 #121212，状态栏图标转亮 -->
+    <style name="Theme.ClassReminder.Dark" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/app_background_dark</item>
+        <item name="android:statusBarColor">@color/app_surface_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowSplashScreenAnimationDuration">0</item>
+        <item name="android:windowSplashScreenBackground">@color/app_background_dark</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/app_background_dark</item>
+    </style>
+</resources>
