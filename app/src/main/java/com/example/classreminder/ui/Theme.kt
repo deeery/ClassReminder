@@ -34,7 +34,9 @@ private val LightColors = lightColorScheme(
     onSurface = Color(0xFF1A1A1A),
     surfaceVariant = Color(0xFFEDEFF3),
     onSurfaceVariant = Color(0xFF464C55),
-    outline = Color(0xFFB4BBC5),
+    // 灰阶刻意拉开：outline 要能在白卡片上看见（对白色 1.76:1），
+    // outlineVariant 只能当分隔线（对白色 1.24:1）。原来两者只差一档，视觉上分不出层级
+    outline = Color(0xFF9AA3AF),
     outlineVariant = Color(0xFFE2E6EC),
     error = Color(0xFFD32F2F),
     onError = Color.White,
@@ -57,7 +59,9 @@ private val DarkColors = darkColorScheme(
     onSurface = Color(0xFFE0E0E0),
     surfaceVariant = Color(0xFF2A2E34),
     onSurfaceVariant = Color(0xFFC2C7CF),
-    outline = Color(0xFF5A6169),
+    // 深色下同样把灰阶拉开：outline 对 surface 1.78:1（能当描边），
+    // outlineVariant 只有 1.24:1（只当分隔线）
+    outline = Color(0xFF6B737C),
     outlineVariant = Color(0xFF33383F),
     error = Color(0xFFEF5350),
     onError = Color(0xFF1A1A1A),
