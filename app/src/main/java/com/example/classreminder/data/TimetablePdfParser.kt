@@ -60,6 +60,8 @@ object TimetablePdfParser {
     private val DETAIL_START = Regex("^\\((\\d+)-(\\d+)节\\)")
     private val DETAIL_END = "/学分:"
     private val TM = Regex("^([-\\d.]+) ([-\\d.]+) ([-\\d.]+) ([-\\d.]+) ([-\\d.]+) ([-\\d.]+) Tm$")
+    private val FIELD = Regex("/([^:]+):([^/]*)")
+    private val WEEKS = Regex("\\(\\d+-\\d+节\\)([^/]*)")
 
     /** 一段文字及其坐标 */
     private data class Run(val x: Double, val y: Double, val text: String)
@@ -131,12 +133,12 @@ object TimetablePdfParser {
             endTime = endAt.second,
             room = field(detail, "场地"),
             teacher = field(detail, "教师"),
-            weeks = Regex("\\(\\d+-\\d+节\\)([^/]*)").find(detail)?.groupValues?.get(1)?.trim().orEmpty()
+            weeks = WEEKS.find(detail)?.groupValues?.get(1)?.trim().orEmpty()
         )
     }
 
     private fun field(detail: String, name: String): String =
-        Regex("/$name:([^/]*)").find(detail)?.groupValues?.get(1)?.trim().orEmpty()
+        FIELD.findAll(detail).firstOrNull { it.groupValues[1] == name }?.groupValues?.get(2)?.trim().orEmpty()
 
     // ── PDF 底层：解压内容流、取带坐标的文字 ──────────────────────────
 

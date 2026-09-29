@@ -49,6 +49,13 @@ class ClassReminderService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var lastShownId: Int? = null
 
+    /** 缓存数据库实例：checkAndNotify 每 30 秒调用一次，每次都走 synchronized 单例检查是浪费 */
+    private val db by lazy { AppDatabase.getInstance(applicationContext) }
+    private val classDao by lazy { db.classDao() }
+
+    /** 缓存 Calendar 实例，避免 formatTime 每次调用都新建 */
+    private val timeCal = java.util.Calendar.getInstance()
+
     override fun onCreate() {
         super.onCreate()
         isRunning = true
@@ -145,8 +152,7 @@ class ClassReminderService : Service() {
 
     private suspend fun checkAndNotify() {
         val now = System.currentTimeMillis()
-        val db = AppDatabase.getInstance(applicationContext)
-        val all = db.classDao().getAll()
+        val all = classDao.getAll()
 
         val currentWeek = Prefs.currentWeek(applicationContext)
         val todayClasses = TodaySchedule.today(all, currentWeek, now)
@@ -252,10 +258,12 @@ class ClassReminderService : Service() {
     }
 
     private fun formatTime(millis: Long): String {
-        val cal = java.util.Calendar.getInstance().apply { timeInMillis = millis }
-        val h = cal.get(java.util.Calendar.HOUR_OF_DAY)
-        val m = cal.get(java.util.Calendar.MINUTE)
-        return String.format(java.util.Locale.getDefault(), "%02d:%02d", h, m)
+        synchronized(timeCal) {
+            timeCal.timeInMillis = millis
+            val h = timeCal.get(java.util.Calendar.HOUR_OF_DAY)
+            val m = timeCal.get(java.util.Calendar.MINUTE)
+            return String.format(java.util.Locale.getDefault(), "%02d:%02d", h, m)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

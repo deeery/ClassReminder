@@ -58,7 +58,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun save(entity: ClassEntity) {
         viewModelScope.launch {
             dao.insert(entity)
-            loadClasses()
+            _classes.value = dao.getAll()
         }
     }
 
@@ -66,7 +66,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun delete(entity: ClassEntity) {
         viewModelScope.launch {
             dao.delete(entity)
-            loadClasses()
+            _classes.value = dao.getAll()
         }
     }
 
@@ -103,7 +103,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun insertAll(courses: List<TimetablePdfParser.Course>) {
-        val existing = dao.getAll()
+        val existing = dao.getAll().toMutableList()
         // 现有 id 都是毫秒时间戳量级，同一批导入共用一个基准再递增，保证批内不撞 id
         val base = (System.currentTimeMillis() % Int.MAX_VALUE).toInt()
         val takenIds = mutableSetOf<Int>()
@@ -115,9 +115,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             val id = match?.id ?: (base + index)
             takenIds += id
-            dao.insert(course.toEntity(id))
+            val entity = course.toEntity(id)
+            dao.insert(entity)
+            // 直接更新内存列表，省掉末尾又一次 DB 读取
+            if (match != null) {
+                val idx = existing.indexOfFirst { it.id == id }
+                if (idx >= 0) existing[idx] = entity
+            } else {
+                existing.add(entity)
+            }
         }
-        loadClasses()
+        _classes.value = existing.toList()
     }
 
     // ── 快速便签的增删改与排序 ────────────────────────────────────────
@@ -175,7 +183,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // 没改内容就别占一格回撤
         if (_notes.value.firstOrNull { it.id == id }?.text == trimmed) return
         mutateNotes {
-            val current = noteDao.getAll().firstOrNull { it.id == id } ?: return@mutateNotes
+            val current = noteDao.getById(id) ?: return@mutateNotes
             noteDao.insert(current.copy(text = trimmed))
         }
     }
@@ -216,9 +224,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** 毫秒级 id，并避开当前已有的 id，免得 REPLACE 把别人的便签顶掉 */
-    private fun newNoteId(): Int {
+    private suspend fun newNoteId(): Int {
+        val taken = noteDao.getAll().mapTo(mutableSetOf()) { it.id }
         var id = (System.currentTimeMillis() % Int.MAX_VALUE).toInt()
-        val taken = _notes.value.mapTo(mutableSetOf()) { it.id }
         while (id in taken) id++
         return id
     }

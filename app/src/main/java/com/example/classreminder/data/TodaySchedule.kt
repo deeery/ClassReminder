@@ -13,6 +13,9 @@ object TodaySchedule {
         "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"
     )
 
+    /** 日期格式化器（只在单线程调用，用 lazy 即可保证安全） */
+    private val DATE_FORMAT = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+
     /** 今天的一次课；起止时间已经换算成今天的时间戳 */
     data class TodayClass(val entity: ClassEntity, val startMillis: Long, val endMillis: Long) {
         fun ongoingAt(now: Long): Boolean = now in startMillis..endMillis
@@ -67,8 +70,7 @@ object TodaySchedule {
     }
 
     /** yyyy-MM-dd */
-    fun dateOf(millis: Long): String =
-        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date(millis))
+    fun dateOf(millis: Long): String = DATE_FORMAT.format(java.util.Date(millis))
 
     /** 日期字符串是否合法（yyyy-MM-dd） */
     fun isValidDate(date: String): Boolean = dateMillisOf(date) != null
@@ -77,8 +79,7 @@ object TodaySchedule {
     fun dayNameOfDate(date: String): String? = dateMillisOf(date)?.let { dayNameOf(it) }
 
     private fun dateMillisOf(date: String): Long? = runCatching {
-        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
-            .parse(date)?.time
+        DATE_FORMAT.parse(date)?.time
     }.getOrNull()
 
     /** 今天还没结束的课 —— 空闲时段里的「今日剩余」 */
@@ -89,13 +90,15 @@ object TodaySchedule {
         val startMinutes = minutesOf(entity.startTime) ?: return null
         val endMinutes = minutesOf(entity.endTime) ?: return null
 
-        fun at(minutes: Int): Long = Calendar.getInstance().apply {
-            timeInMillis = now
-            set(Calendar.HOUR_OF_DAY, minutes / 60)
-            set(Calendar.MINUTE, minutes % 60)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
+        // 复用同一个 Calendar 实例：每次设置后 timeInMillis 自动更新，不需要重新 getInstance
+        val cal = Calendar.getInstance().apply { timeInMillis = now }
+        fun at(minutes: Int): Long {
+            cal.set(Calendar.HOUR_OF_DAY, minutes / 60)
+            cal.set(Calendar.MINUTE, minutes % 60)
+            cal.set(Calendar.SECOND, 0)
+            cal.set(Calendar.MILLISECOND, 0)
+            return cal.timeInMillis
+        }
 
         val startMillis = at(startMinutes)
         var endMillis = at(endMinutes)

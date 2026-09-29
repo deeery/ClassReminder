@@ -8,6 +8,10 @@ interface NoteDao {
     @Query("SELECT * FROM notes ORDER BY position ASC, createdAt ASC")
     suspend fun getAll(): List<NoteEntity>
 
+    /** 按主键查单条，避免 updateNote 里跑全表扫描 */
+    @Query("SELECT * FROM notes WHERE id = :id")
+    suspend fun getById(id: Int): NoteEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: NoteEntity)
 

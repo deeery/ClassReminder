@@ -20,6 +20,11 @@ object WeekSchedule {
     private val RANGE = Regex("(\\d+)\\s*-\\s*(\\d+)")
     private val SINGLE = Regex("\\d+")
 
+    /** ThreadLocal Calendar：避免每次新建实例的同步锁开销 */
+    private val threadLocalCalendar = object : ThreadLocal<Calendar>() {
+        override fun initialValue(): Calendar = Calendar.getInstance()
+    }
+
     /** 解析周次集合；文本里没有可用的周次数字时返回 null */
     fun parse(text: String): Set<Int>? {
         if (text.isBlank()) return null
@@ -53,15 +58,18 @@ object WeekSchedule {
     fun contains(weeksText: String, week: Int): Boolean = parse(weeksText)?.contains(week) ?: true
 
     /** 把任意时刻归一到它所在那一周的周一 00:00 */
-    fun mondayOf(millis: Long): Long = Calendar.getInstance().apply {
-        timeInMillis = millis
-        set(Calendar.HOUR_OF_DAY, 0)
-        set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
+    fun mondayOf(millis: Long): Long {
+        // 避免每次调用都新建 Calendar（内部有同步锁），用 ThreadLocal 提升吞吐
+        val cal = threadLocalCalendar.get()
+        cal.timeInMillis = millis
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
         // Calendar: 周日=1 … 周六=7 → 换算成「距离本周周一几天」
-        add(Calendar.DAY_OF_MONTH, -((get(Calendar.DAY_OF_WEEK) + 5) % 7))
-    }.timeInMillis
+        cal.add(Calendar.DAY_OF_MONTH, -((cal.get(Calendar.DAY_OF_WEEK) + 5) % 7))
+        return cal.timeInMillis
+    }
 
     /** 第 [week] 周的周一（[week1Monday] 是第 1 周的周一） */
     fun weekStart(week1Monday: Long, week: Int): Long = week1Monday + (week - 1) * WEEK_MILLIS
