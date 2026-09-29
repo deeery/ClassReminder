@@ -99,17 +99,20 @@ object Prefs {
     private const val KEY_WEEK_GRID = "week_grid"
 
     /**
-     * 上次停留的非设置页：0=列表，1=课表。
-     * 设置页（2）不记录，所以从设置页退出后仍会回到之前那个页面。
+     * 上次停留的非设置页：0=今天，1=课表，2=便签。
+     * 设置页（3）不记录，所以从设置页退出后仍会回到之前那个页面。
+     *
+     * 旧版本只存 0/1（便签/课表）两页，语义已变：老值 0 会被读成「今天」、1 读成「课表」。
+     * 这是可接受的降级 —— 一次性的首屏落点变化，不影响任何数据。
      */
     fun getLastTab(ctx: Context): Int {
         val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
-        return sp.getInt(KEY_LAST_TAB, 0).coerceIn(0, 1)
+        return sp.getInt(KEY_LAST_TAB, 0).coerceIn(0, 2)
     }
 
     fun setLastTab(ctx: Context, tab: Int) {
         // 唯一的守卫放在这里：只记非设置页
-        if (tab !in 0..1) return
+        if (tab !in 0..2) return
         val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
         sp.edit().putInt(KEY_LAST_TAB, tab).apply()
     }
