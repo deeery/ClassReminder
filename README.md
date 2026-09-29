@@ -87,22 +87,26 @@ MainActivity (单 Activity)
 
 `Prefs.getLastTab` 的语义随之变化：`0=今天 / 1=课表 / 2=便签`，设置页（3）不记录。老版本存的值会被读成新语义（0→今天、1→课表），这是一次性的首屏落点变化，不影响任何数据。
 
-**3. 表格页：选中详情卡**
+**3. 表格页：选中详情卡 + FAB 上移**
 
 单击课程块只高亮，但格子太窄（正常列约 50–70dp）放不下完整信息，教室/老师经常被截断。所以选中后在网格下方浮出一条 **`ClassDetailCard`**：
 
 - 左侧 4dp 竖条沿用课程块的配色规则（**今日=蓝 / 非今日=灰**），详情条和被选中那一块在视觉上是同一个东西
 - 两行信息：课程名（可折两行）+「周二 14:00–15:40 · 教二 305 · 王海燕」
-- 右侧提示「**双击编辑**」+ 关闭按钮
-- 整条可双击进编辑，和网格里的手感一致
+- 右侧两个 **34dp 图标按钮**：**铅笔（编辑，`primary` 色）** + **×（取消选中，`onSurfaceVariant` 色）**
+- 整条仍可双击进编辑，和网格里的手感一致（双击手势与铅笔按钮并存，两条路都通向编辑）
 
-**为什么要加这句提示**：单击只是变蓝、什么都不发生，用户会以为应用坏了。
+**为什么把「双击编辑」文字换成铅笔按钮**：详情条是弹出层，用户第一反应是去点它，而不是猜「要双击」；而且它原本正好压在右下角 `+`（FAB）上。现在编辑有了看得见的入口，`+` 则整体上移让位。
 
-**4. 课程表模式切换改为自绘 M3 分段按钮**
+**FAB 上移**：`selectedClassId` 从 `WeekGrid` 提升到 `MainScreen`，让 `Scaffold` 里的 FAB 也能读到。选中时 FAB 通过 `animateDpAsState` + `Modifier.padding(bottom = DETAIL_BAR_LIFT)` 上推 **80dp**（`DETAIL_BAR_LIFT = 80.dp`，即详情条总高含 10dp 间距）。用 `padding` 而非 `offset`：padding 会真正推动按钮并让 Scaffold 的 FAB 槽位变高，`offset` 只是视觉位移、会和详情条叠在一起。
 
-「表格 / 列表」从自绘滑块换成 **Material 3 Segmented Button** 的形态：外框一整条 1dp 描边 + 内部胶囊分段，选中段填充 `primaryContainer`。
+**实测**（Medium_Phone，density 420 / ×2.625）：FAB 从 `y∈[1911,1974]` 移到 `y∈[1701,1764]`，正好上移 210px = **80dp**；FAB 底边 1764 与详情条顶边 1896 之间留 **50dp** 空隙，不再重叠。取消选中后 FAB 准确回到 1911。
 
-**为什么是自绘**：官方的 `SingleChoiceSegmentedButtonRow` 从 material3 **1.2.0** 才有，本项目锁在 compose-bom `2024.01.00`（material3 1.1.2），且构建必须 `--offline`，拉不到新版本。所以照 M3 规范手搓一个，视觉一致。
+**4. 课程表模式切换：保留原滑块式**
+
+「表格 / 列表」**沿用原有的滑块式** `WeekModeSwitch`，没有改成 M3 分段按钮：`onSurface` α6% 底 + `primary` 实心滑块（`animateIntOffsetAsState` / `tween(200)`）+ 选中 `Bold`/未选中 `Normal` 字重 + 圆角 8dp/6dp。
+
+**为什么放弃 M3 Segmented Button**：官方的 `SingleChoiceSegmentedButtonRow` 从 material3 **1.2.0** 才有，本项目锁在 compose-bom `2024.01.00`（material3 1.1.2），且构建必须 `--offline`，拉不到新版本，所以只能手搓。但手搓版与原有滑块式视觉接近、且滑块式交互更直观（滑块滑动而非边框内填色），故回到原方案。
 
 **5. 设置页与底栏的 M3 微调**
 
@@ -110,7 +114,7 @@ MainActivity (单 Activity)
 - `Switch` 配色对齐 M3：打开 = `primary` 轨道 + `onPrimary` 滑块；关闭 = `surfaceVariant` 轨道 + `outline` 滑块。原来「打开」用 `primary` α0.5 的轨道，颜色发灰。
 - 底栏状态行改用 `surfaceVariant` 半透明底 + `outlineVariant` 分隔线，`NavigationBar` 显式 `tonalElevation = 0.dp`（本项目整体是「白底 + 极淡描边」的扁平风，导航栏再抬一层灰会显得脏）。导航项未选中色统一用 `onSurfaceVariant`。
 
-**验收页**：`build/preview/material3-preview.html`（四屏并列，可切深浅色、可演示选中课块 + 详情卡）。
+**验收页**：`build/preview/material3-preview.html`（四屏并列，可切深浅色、可演示选中课块 → 详情卡 + FAB 上移）。
 
 **取舍**：为了跨文件复用 `SHAPE_CARD` / `ENTER_MS` / `TemporaryBadge`，把它们从 `private` 放宽到 `internal`（Kotlin 的 `private` 在文件作用域是「本文件可见」，`TodayScreen.kt` 拿不到）。
 
