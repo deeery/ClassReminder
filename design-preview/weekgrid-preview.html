@@ -1,0 +1,1124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>周课表网格 — 表格视觉优化验收页</title>
+<style>
+/* ================================================================
+   周课表网格视觉验收页
+   ----------------------------------------------------------------
+   这是把 Compose 里 WeekGrid 的渲染逻辑用 HTML/CSS 1:1 复刻出来的
+   验收稿。所有参数都直接对标源码里的常量：
+
+     ZEBRA_ALPHA         = 0.03   按小时交替的底纹
+     GRID_LINE_ALPHA     = 0.08   横向时刻线
+     GRID_COLUMN_ALPHA   = 0.05   竖向列分隔
+     BLOCK_GAP           = 5px    课程块之间（两侧各 2.5）
+     AXIS_LABEL_MIN_GAP  = 15px   刻度防重叠
+     选中列底色          = 浅 0.055 / 深 0.14
+     悬停列底色          = 浅 0.022 / 深 0.05
+     列边缘描边          = 0.22
+
+   主题色直接取自 Theme.kt 的 lightColorScheme / darkColorScheme。
+   ================================================================ */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  --base-unit: 8px;
+
+  /* 主题令牌由 body 上的类切换 */
+  --primary: #1565C0;
+  --on-primary: #ffffff;
+  --surface: #ffffff;
+  --background: #F8F9FA;
+  --on-surface: #1A1A1A;
+  --on-surface-variant: #464C55;
+  --surface-variant: #EDEFF3;
+  --outline: #9AA3AF;
+  --outline-variant: #E2E6EC;
+  --secondary: #F9A825;
+  --secondary-container: #FFF1CC;
+  --on-secondary-container: #6B4E00;
+
+  --zebra-alpha: 0.03;
+  --grid-line-alpha: 0.08;
+  --grid-column-alpha: 0.05;
+  /* 今日选中：主色（蓝）α0.14 */
+  --select-today-alpha: 0.14;
+  /* 非今日选中：中性灰 α0.75（灰不抢眼，要更深才看得出选中） */
+  --select-other-alpha: 0.75;
+  --neutral-select: #E2E6EC;      /* outlineVariant（浅色） */
+  /* 今日常态弱底（未选中时也铺一层，让「今天」始终有存在感） */
+  --today-base-alpha: 0.035;
+  --hover-tint-alpha: 0.022;
+  /* 课程块选中底：浅色 α0.12；选中光晕 α0.17 */
+  --select-tint-pct: 12%;
+  --select-glow: color-mix(in srgb, var(--select-color, var(--primary)) 17%, transparent);
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  /* 表头高度（对应源码 GRID_HEADER_HEIGHT = 46dp）。
+     表头格子占满这个高度，底色才能一路铺到列身顶上、不留断层 */
+  --header-h: 46px;
+}
+
+body.dark {
+  --primary: #90CAF9;
+  --on-primary: #0D1B2A;
+  --surface: #1E1E1E;
+  --background: #121212;
+  --on-surface: #E0E0E0;
+  --on-surface-variant: #C2C7CF;
+  --surface-variant: #2A2E34;
+  --outline: #6B737C;
+  --outline-variant: #33383F;
+  --secondary: #FFD54F;
+  --secondary-container: #5A4410;
+  --on-secondary-container: #FFE9B0;
+
+  --select-today-alpha: 0.34;
+  --select-other-alpha: 0.85;
+  --neutral-select: #2A2E34;      /* surfaceVariant（深色） */
+  --today-base-alpha: 0.07;
+  --hover-tint-alpha: 0.05;
+  --select-tint-pct: 22%;
+  --select-glow: color-mix(in srgb, var(--select-color, var(--primary)) 30%, transparent);
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font);
+  background: var(--background);
+  color: var(--on-surface);
+  transition: background .25s ease, color .25s ease;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── 页面外壳：演示用的工具栏与说明，不属于组件本身 ── */
+.shell { max-width: 1180px; margin: 0 auto; padding: 32px 24px 96px; }
+
+.page-head { margin-bottom: 32px; }
+.page-head h1 {
+  font-size: 28px; font-weight: 600; margin: 0 0 8px;
+  letter-spacing: -.02em;
+}
+.page-head p {
+  margin: 0; font-size: 14px; line-height: 1.7;
+  color: var(--on-surface-variant); max-width: 68ch;
+}
+
+.toolbar {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  margin: 20px 0 8px;
+}
+.btn {
+  appearance: none; border: none; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 500;
+  padding: 8px 14px; border-radius: 6px;
+  background: var(--surface); color: var(--on-surface);
+  /* Vercel 的 shadow-as-border：不用真 border，1px 无偏移阴影当边框 */
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--on-surface) 12%, transparent);
+  transition: background .15s ease, box-shadow .15s ease;
+}
+.btn:hover { box-shadow: 0 0 0 1px color-mix(in srgb, var(--on-surface) 26%, transparent); }
+.btn.primary { background: var(--on-surface); color: var(--surface); }
+.btn.active { box-shadow: 0 0 0 2px var(--primary); }
+
+.hint {
+  font-size: 12px; color: var(--on-surface-variant);
+  margin: 10px 0 0; line-height: 1.6;
+}
+
+/* ── 分区标题 ── */
+.section { margin-top: 44px; }
+.section-title {
+  display: flex; align-items: baseline; gap: 10px;
+  margin: 0 0 4px;
+}
+.section-title h2 { font-size: 16px; font-weight: 600; margin: 0; }
+.section-title .tag {
+  font-family: var(--mono); font-size: 11px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: .06em;
+  color: var(--on-surface-variant);
+}
+.section-desc {
+  font-size: 13px; line-height: 1.75; color: var(--on-surface-variant);
+  margin: 6px 0 16px; max-width: 76ch;
+}
+.section-desc code {
+  font-family: var(--mono); font-size: 12px;
+  background: var(--surface-variant); padding: 1px 5px; border-radius: 3px;
+  color: var(--on-surface);
+}
+.section-desc b { color: var(--on-surface); font-weight: 600; }
+
+/* ================================================================
+   组件本体：周课表网格
+   ================================================================ */
+.grid-card {
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--on-surface) 8%, transparent);
+  padding: 4px 4px 8px;
+  overflow: hidden;
+}
+
+/* 表头行 */
+.week-head {
+  position: relative;
+  display: flex;
+  /* 表头不再用 padding-bottom —— 那会在表头底与列身顶之间挖出一条无底色的透明带，
+     高亮列被切成「上深下浅」两截。间距改为做进格子的内部 padding（见 .head-cell） */
+  padding-bottom: 0;
+  /* 表头下的结构分隔线（对应源码 headerDivider, outline α0.45） */
+  border-bottom: 1px solid color-mix(in srgb, var(--outline) 45%, transparent);
+}
+.week-head .axis-spacer {
+  flex: 0 0 var(--label-w, 48px);
+  /* 与表头格子等高，保证表头整条高度一致 */
+  height: var(--header-h, 46px);
+}
+
+.head-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 2px;
+  /* 表头格子占满整段表头高度（含下方留白区），底色一路铺到列身顶上。
+     上 6px 给文字留呼吸，下 6px 是 HEADER_GAP —— 两者都在格子**内部**，
+     所以底色覆盖完整，不会出现断层 */
+  height: var(--header-h, 46px);
+  padding: 6px 2px 6px;
+  /* 表头是一条连续的带子：只让首列圆左上、末列圆右上，
+     中间列不圆角 —— 每列各自圆角会在列间切出缺口，露出背景形成「黑色断层」 */
+  border-radius: 0;
+  cursor: pointer;
+  user-select: none;
+  transition: background .24s ease;
+}
+.head-cell:first-child { border-top-left-radius: 8px; }
+.head-cell:last-child { border-top-right-radius: 8px; }
+
+/* 今日常态弱底 */
+.head-cell.is-today {
+  background: color-mix(in srgb, var(--primary) calc(var(--today-base-alpha) * 100%), transparent);
+}
+/* 悬停（未选中） */
+.head-cell.is-hover:not(.is-active) {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+/* 选中：今日 = 蓝，非今日 = 灰 */
+.head-cell.is-active.is-today {
+  background: color-mix(in srgb, var(--primary) calc(var(--select-today-alpha) * 100%), transparent);
+}
+.head-cell.is-active:not(.is-today) {
+  background: color-mix(in srgb, var(--neutral-select) calc(var(--select-other-alpha) * 100%), transparent);
+}
+
+.head-cell .day-name {
+  font-size: 12px; font-weight: 600; letter-spacing: .012em;
+  color: var(--on-surface-variant);
+  transition: color .24s ease;
+  white-space: nowrap;
+}
+.head-cell.is-hover:not(.is-active) .day-name { color: var(--on-surface); }
+.head-cell.is-active.is-today .day-name { color: var(--primary); font-weight: 700; }
+/* 非今日选中：不能也用主色，否则和「今日」混淆。
+   用主文字色（深/浅自动反转）表达「被选中」 */
+.head-cell.is-active:not(.is-today) .day-name { color: var(--on-surface); font-weight: 700; }
+
+/* 今日角标 */
+.today-badge {
+  font-size: 9px; font-weight: 700; line-height: 1;
+  padding: 2px 5px; border-radius: 999px;
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--primary);
+  white-space: nowrap;
+}
+/* 今日列的下划线：压在表头格子的底边上 */
+.head-cell.is-today::after {
+  content: "";
+  position: absolute; left: 0; right: 0; bottom: 0;
+  height: 2px; border-radius: 1px;
+  background: color-mix(in srgb, var(--primary) calc(0.45 * 100%), transparent);
+  transition: background .24s ease;
+}
+.head-cell.is-today.is-active::after {
+  background: color-mix(in srgb, var(--primary) calc(0.6 * 100%), transparent);
+}
+
+/* 网格主体 */
+.week-body {
+  position: relative;
+  display: flex;
+  /* 高度由 JS 按行数设置，模拟 Compose 里 rowHeight × rowCount */
+}
+
+/* 左侧刻度栏 */
+.axis {
+  flex: 0 0 var(--label-w, 48px);
+  position: relative;
+}
+.axis-label {
+  position: absolute;
+  right: 4px;
+  transform: translateY(-8px);
+  font-size: 11px; font-weight: 700;
+  color: var(--on-surface-variant);
+  white-space: nowrap;
+  line-height: 1;
+}
+
+/* 网格底纹层：斑马纹 + 横线 + 竖线 */
+.grid-lines {
+  position: absolute; inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+/* 斑马纹色带 */
+.zebra-band {
+  position: absolute;
+  left: var(--label-w, 48px); right: 0;
+  background: color-mix(in srgb, var(--on-surface) calc(var(--zebra-alpha) * 100%), transparent);
+}
+/* 横向时刻线 */
+.grid-hline {
+  position: absolute;
+  left: var(--label-w, 48px); right: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--on-surface) calc(var(--grid-line-alpha) * 100%), transparent);
+}
+/* 竖向列分隔 */
+.grid-vline {
+  position: absolute; top: 0; bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--on-surface) calc(var(--grid-column-alpha) * 100%), transparent);
+}
+
+/* 七天列 */
+.days {
+  flex: 1 1 auto;
+  display: flex;
+  position: relative;
+  z-index: 1;
+}
+.day-col {
+  position: relative;
+  min-width: 0;
+  /* 注意：这里**没有**左右 padding。之前每列各留 1px 内边距，
+     高亮底色铺不满、列间露出背景，在深色下就是一串「黑色断层」。
+     现在底色铺满整列，列与列严丝合缝 */
+  transition: background .24s ease;
+}
+/* 今日的常态弱底（未选中时） */
+.day-col.is-today {
+  background: color-mix(in srgb, var(--primary) calc(var(--today-base-alpha) * 100%), transparent);
+}
+/* 悬停整列（弱一档） */
+.day-col.is-hover:not(.is-active) {
+  background: color-mix(in srgb, var(--primary) calc(var(--hover-tint-alpha) * 100%), transparent);
+}
+/* 选中整列：今日 = 蓝，非今日 = 灰（两套颜色，一眼可辨） */
+.day-col.is-active.is-today {
+  background: color-mix(in srgb, var(--primary) calc(var(--select-today-alpha) * 100%), transparent);
+  box-shadow:
+    inset 1px 0 0 color-mix(in srgb, var(--primary) 30%, transparent),
+    inset -1px 0 0 color-mix(in srgb, var(--primary) 30%, transparent);
+}
+.day-col.is-active:not(.is-today) {
+  background: color-mix(in srgb, var(--neutral-select) calc(var(--select-other-alpha) * 100%), transparent);
+  box-shadow:
+    inset 1px 0 0 color-mix(in srgb, var(--neutral-select) 55%, transparent),
+    inset -1px 0 0 color-mix(in srgb, var(--neutral-select) 55%, transparent);
+}
+
+/* 课程块 */
+.block {
+  position: absolute;
+  /* BLOCK_GAP = 5px，两侧各留一半 */
+  padding: 2.5px;
+}
+.block-inner {
+  position: relative;
+  height: 100%;
+  display: flex;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--surface);
+  /* 默认描边：浅色 outline α0.40 / 深色 primary α0.16 */
+  box-shadow: 0 0 0 0.75px color-mix(in srgb, var(--outline) 40%, transparent);
+  cursor: pointer;
+  transition: box-shadow .12s ease, transform .12s ease;
+}
+.block-inner:hover {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 52%, transparent);
+  transform: translateY(-1px);
+}
+/* 临时提醒的课：暖黄底 + 暖黄竖条 */
+.block-inner.is-temp {
+  background: var(--secondary-container);
+}
+
+/* ══ 选中态：单击产生（只高亮，不进编辑） ══
+   规则与列表卡片同源：今日 = 蓝（primary），非今日 = 灰。
+   灰不能用 onSurface 调 α（深色下与 surface 只差 1.78:1，等于没铺），
+   所以深色走 surfaceVariant、浅色走 outlineVariant —— 都是「比背景深一档」的中性色 */
+.block-inner.is-selected {
+  /* 今日默认走蓝（primary），非今日由下面的规则覆盖成灰 */
+  --select-color: var(--primary);
+  /* 选中底色：深色 α0.22 / 浅色 α0.12 */
+  background: color-mix(in srgb, var(--select-color) var(--select-tint-pct), var(--surface));
+  /* 描边 1.5px 选中色 + 向外 3px 光晕 */
+  box-shadow:
+    inset 0 0 0 1.5px color-mix(in srgb, var(--select-color) 80%, transparent),
+    0 0 0 3px var(--select-glow);
+  transform: scale(1.05);
+  z-index: 3;
+}
+/* 非今日（灰条） */
+.days .day-col:not(.is-today) .block-inner.is-selected {
+  --select-color: var(--neutral-select);
+}
+/* 选中时竖条加粗到 4px + 纵向渐变 */
+.block-inner.is-selected .block-bar {
+  flex: 0 0 4px;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--select-color) 100%, transparent),
+    color-mix(in srgb, var(--select-color) 48%, transparent));
+}
+/* 临时课也遵守「选中换色」：暖黄让位给蓝/灰 —— 因为上面那条 .block-inner.is-selected.is-temp
+   的 .block-bar 规则优先级更高，需要再声明一遍保持颜色一致 */
+.days .day-col:not(.is-today) .block-inner.is-selected.is-temp {
+  --select-color: var(--neutral-select);
+}
+.block-inner.is-selected.is-temp .block-bar {
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--select-color) 100%, transparent),
+    color-mix(in srgb, var(--select-color) 48%, transparent));
+}
+
+/* 左侧竖色条：2px */
+.block-bar {
+  flex: 0 0 2px;
+  align-self: stretch;
+  background: color-mix(in srgb, var(--primary) 55%, transparent);
+}
+.block-inner.is-temp .block-bar { background: var(--secondary); }
+
+.block-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex; flex-direction: column;
+  justify-content: center;
+  padding: 3px 4px;
+  gap: 1px;
+}
+.block-title {
+  font-size: var(--block-title-size, 11px);
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--on-surface);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.block-room {
+  font-size: var(--block-room-size, 9px);
+  line-height: 1.2;
+  color: color-mix(in srgb, var(--on-surface) 55%, transparent);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* 双击进编辑的提示条（表格课程块与卡片共用） */
+.edit-toast {
+  margin-top: 12px;
+  font-size: 13px; font-weight: 500;
+  padding: 9px 14px; border-radius: 8px;
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  color: var(--primary);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity .2s ease, transform .2s ease;
+  pointer-events: none;
+}
+.edit-toast.show { opacity: 1; transform: translateY(0); }
+
+/* ── 图例区 ── */
+.legend {
+  display: flex; flex-wrap: wrap; gap: 18px;
+  margin-top: 18px; padding-top: 18px;
+  border-top: 1px solid var(--outline-variant);
+}
+.legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--on-surface-variant); }
+.legend-swatch {
+  width: 28px; height: 16px; border-radius: 4px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--on-surface) 10%, transparent);
+  flex: 0 0 auto;
+}
+
+/* ── 窄屏模拟 ── */
+.phone-frame {
+  width: 360px;
+  max-width: 100%;
+  border-radius: 16px;
+  padding: 8px;
+  background: var(--background);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--on-surface) 14%, transparent);
+}
+
+/* 对比：改动前后 */
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 860px) { .compare { grid-template-columns: 1fr; } }
+
+.compare-col h3 {
+  font-size: 13px; font-weight: 600; margin: 0 0 8px;
+  display: flex; align-items: center; gap: 8px;
+}
+.pill {
+  font-family: var(--mono); font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em;
+  padding: 2px 7px; border-radius: 999px;
+}
+.pill.before { background: color-mix(in srgb, var(--on-surface) 8%, transparent); color: var(--on-surface-variant); }
+.pill.after { background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary); }
+
+/* 旧版：没有斑马纹、没有列分隔、块之间无缝隙、表头无分隔线 */
+.legacy .zebra-band,
+.legacy .grid-vline { display: none; }
+.legacy .week-head { border-bottom: none; }
+.legacy .block { padding: 0; }
+.legacy .block-inner { box-shadow: none; }
+.legacy .day-col.is-hover { background: transparent; }
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <div class="page-head">
+    <h1>周课表网格 — 表格视觉优化验收</h1>
+    <p>
+      这是把 Compose 里 <code>WeekGrid</code> 的渲染逻辑用 HTML/CSS 复刻的验收稿，参数与源码常量一一对应。
+      你可以在浏览器里逐项对照、切换深浅主题、模拟窄屏，确认满意后再落地到 APK。
+    </p>
+    <div class="toolbar">
+      <button class="btn primary" id="btn-theme">切换深色 / 浅色</button>
+      <button class="btn" id="btn-zoom">列宽：宽松</button>
+      <button class="btn" id="btn-hover-demo">演示悬停整列</button>
+    </div>
+    <p class="hint">
+      鼠标在课程块上移动可以看到<b>整列轻高亮</b>（表头也会跟着亮）；把鼠标移到星期表头上可以<b>点击选中</b>该列，看选中态与今日下划线。
+    </p>
+  </div>
+
+  <!-- ══════════════ 0. 表格课程块交互（本次改动） ══════════════ -->
+  <div class="section">
+    <div class="section-title">
+      <h2>表格课程块交互</h2>
+      <span class="tag">单击 = 高亮 / 双击 = 编辑</span>
+    </div>
+    <p class="section-desc">
+      <b>表格界面</b>（<code>WeekGrid</code> 里的 <code>GridCell</code>）。
+      <b>第一次点下就立即高亮</b>（<code>onPress</code> → <code>onSelect</code>），
+      不管是准备单击还是双击 —— 不等双击判定窗口，手感不木。
+      <b>单击</b>只高亮、<b>不进编辑</b>；<b>双击</b>才进编辑；点空白处取消选中。
+      选中时左侧色条加粗到 <b>4px</b> 并按「是否今天」分流：
+      <b>今日选中 = 蓝</b>（<code>primary</code>），<b>非今日选中 = 灰</b>
+      （深色 <code>surfaceVariant</code> / 浅色 <code>outlineVariant</code>）。
+    </p>
+    <div class="grid-card" id="select-grid"></div>
+    <p class="hint">
+      <b>按下</b>任意课程块（当帧就高亮：色条加粗 + 描边 + 光晕 + 放大 5%）、
+      <b>双击</b>同一个块（底部弹出「进入编辑」提示）、点网格空白处（取消选中）。
+      每周二有课、周五有课，注意对比<b>周二（今日·蓝）</b>与<b>周五（非今日·灰）</b>被选中时的色条差别。
+    </p>
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-swatch" style="background: var(--primary); width: 8px; height: 24px; border-radius: 2px"></div>
+        今日选中 · 蓝条（4dp，纵向渐变）
+      </div>
+      <div class="legend-item">
+        <div class="legend-swatch" style="background: var(--neutral-select); width: 8px; height: 24px; border-radius: 2px"></div>
+        非今日选中 · 灰条（同宽度，仅换色）
+      </div>
+      <div class="legend-item">
+        <div class="legend-swatch" style="background: color-mix(in srgb, var(--primary) 55%, transparent); width: 4px; height: 24px; border-radius: 1px"></div>
+        未选中 · 2dp 淡条
+      </div>
+      <div class="legend-item">
+        <div class="legend-swatch" style="background: var(--secondary); width: 4px; height: 24px; border-radius: 1px"></div>
+        临时提醒课 · 暖黄条（未选中时）
+      </div>
+    </div>
+    <div class="edit-toast" id="block-toast"></div>
+  </div>
+
+  <!-- ══════════════ 1. 高亮修复（本次重点） ══════════════ -->
+  <div class="section">
+    <div class="section-title">
+      <h2>高亮列修复</h2>
+      <span class="tag">fill / color / no-stray-bar</span>
+    </div>
+    <p class="section-desc">
+      本次针对截图中三个问题的修复。<b>1)</b> 高亮底色原来每列留 1px 内边距，铺不满、列间露背景
+      → 形成<b>黑色断层</b>，现在铺满整列、列与列严丝合缝；
+      <b>2)</b> 今日列与非今日列原来共用主色、只差透明度 → <b>无法区分</b>，
+      现在今日=蓝、非今日=灰，两套颜色；
+      <b>3)</b> 表头每列各自圆角 → 列间切出缺口，且左侧刻度占位与列身衔接断裂 → 看起来像
+      <b>伸出一根多余竖条</b>，现在表头只保留最外侧圆角、连成一条。
+    </p>
+    <p class="section-desc" style="color: var(--primary); font-weight: 500;">
+      ↑ 补充修复：表头原来在 <code>Row</code> 上挂了 <code>padding-bottom: 6px</code>，
+      这一段没有底色 → 表头底与列身顶之间夹出一条<b>透明横带</b>，高亮列被切成「上深下浅」两截。
+      现已把间距移进格子<b>内部</b>（<code>HEADER_GAP</code>），底色全程铺满。
+    </p>
+    <div class="grid-card" id="fix-grid"></div>
+    <p class="hint">
+      默认已手动高亮 <b>周四</b>（灰 · 非今日），而 <b>周二</b> 是今天（蓝 · 常态弱底）。
+      注意对比：周四的灰色整列铺满无缝隙，周二的蓝色弱底始终可见，「今日」角标贴在周二上。
+      点击任意表头可切换高亮列。
+    </p>
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-swatch" style="background: color-mix(in srgb, var(--primary) 14%, var(--surface))"></div>
+        今日选中（蓝 α0.14）
+      </div>
+      <div class="legend-item">
+        <div class="legend-swatch" style="background: color-mix(in srgb, #E2E6EC 75%, var(--surface))"></div>
+        非今日选中（灰 α0.75）
+      </div>
+      <div class="legend-item">
+        <div class="legend-swatch" style="background: color-mix(in srgb, var(--primary) calc(var(--today-base-alpha) * 100%), var(--surface))"></div>
+        今日常态弱底（α <span id="today-alpha-label">0.035</span>）
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ 2. 改动前后对比 ══════════════ -->
+  <div class="section">
+    <div class="section-title">
+      <h2>整体观感对比</h2>
+      <span class="tag">before / after</span>
+    </div>
+    <p class="section-desc">
+      左侧是 v3.16 的状态，右侧是本次改动。差异集中在四处：<b>斑马纹时间带</b>（按小时交替的极淡底纹）、
+      <b>竖向列分隔</b>、<b>块间缝隙</b>、<b>表头分隔线</b>。
+    </p>
+    <div class="compare">
+      <div class="compare-col">
+        <h3><span class="pill before">改动前</span> 平、密、无参照</h3>
+        <div class="grid-card legacy" id="legacy-grid"></div>
+      </div>
+      <div class="compare-col">
+        <h3><span class="pill after">改动后</span> 有层次、有参照</h3>
+        <div class="grid-card" id="new-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ 2. 斑马纹 ══════════════ -->
+  <div class="section">
+    <div class="section-title">
+      <h2>斑马纹：按小时交替的时间带</h2>
+      <span class="tag">ZEBRA_ALPHA = 0.03</span>
+    </div>
+    <p class="section-desc">
+      网格是按时间轴定位的，没有网页表格那种「行」，但<b>时间本身就是行</b>——一小时一行。
+      按偶/奇小时交替铺一层 <code>α 0.03</code> 的底纹，眼睛扫行时有了参照物。
+      刻意比横向时刻线（<code>0.08</code>）还淡：它是「背景的背景」，一旦看得出来就会盖过课程块。
+    </p>
+    <div class="grid-card" id="zebra-grid"></div>
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-swatch" style="background: color-mix(in srgb, var(--on-surface) 3%, transparent)"></div>
+        色带（偶数小时）
+      </div>
+      <div class="legend-item">
+        <div class="legend-swatch" style="background: var(--surface)"></div>
+        留白（奇数小时）
+      </div>
+      <div class="legend-item">
+        <div class="legend-swatch" style="background: color-mix(in srgb, var(--on-surface) 8%, transparent); height: 2px"></div>
+        横向时刻线 α0.08
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ 3. 交互反馈 ══════════════ -->
+  <div class="section">
+    <div class="section-title">
+      <h2>悬停整列 · 点击选中 · 今日标识</h2>
+      <span class="tag">hover / active / today</span>
+    </div>
+    <p class="section-desc">
+      三档强度严格分级：<b>悬停</b>（浅色 α0.022 / 深色 0.05，最弱，只是「预告」）→
+      <b>选中</b>（浅色 0.055 / 深色 0.14，加左右各 1px 主色描边）→ <b>今日</b>（独立的下划线 + 角标，
+      与选中可以并存）。悬停某个课程块时，<b>整列连同表头一起亮</b>——查的是「这一列有什么课」，
+      不是「这个格子有什么课」。
+    </p>
+    <div class="grid-card" id="interact-grid"></div>
+    <p class="hint">
+      试着把鼠标移进任意一个课程块：整列会亮起，表头文字同时加深。再点表头「周四」选中它，对比两档强度差别。
+    </p>
+  </div>
+
+  <!-- ══════════════ 4. 窄屏 ══════════════ -->
+  <div class="section">
+    <div class="section-title">
+      <h2>窄屏响应式</h2>
+      <span class="tag">COMPACT_BREAKPOINT = 360dp</span>
+    </div>
+    <p class="section-desc">
+      窄于 <code>360dp</code> 时整套尺寸降一档：时间栏从 <code>38dp → 30dp</code>、
+      今日列加宽系数从 <code>1.35 → 1.15</code>、字号统一乘 <code>0.92</code>。
+      下面是 360px 宽度下的实际效果。
+    </p>
+    <div class="phone-frame">
+      <div class="grid-card" id="phone-grid"></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><b>宽松</b> 时间栏 48px · 今日列 ×1.35 · 字号 11px</div>
+      <div class="legend-item"><b>窄屏</b> 时间栏 30px · 今日列 ×1.15 · 字号 10.1px</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ================================================================
+   网格渲染器
+   ----------------------------------------------------------------
+   把 Compose 里的布局算法平移过来：
+     spanOf()      → 本周最早开始 / 最晚结束
+     mappingOf()   → 分钟 → 纵向比例（这里 span 内是线性的）
+     roundMarks()  → 无高亮时的整点刻度
+     zebraBands()  → 按小时交替的色带
+     layout()      → 按天分列、按时间摆块、重叠的分左右栏
+   ================================================================ */
+
+const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+const DAY_LABEL = { Monday:'周一', Tuesday:'周二', Wednesday:'周三', Thursday:'周四',
+                    Friday:'周五', Saturday:'周六', Sunday:'周日' };
+
+const TODAY = 'Thursday';   // 演示里把「今天」定在周四
+
+// 演示用课表数据
+const CLASSES = [
+  { day:'Monday',    title:'高等数学',   room:'A-301', start:'08:00', end:'09:35' },
+  { day:'Monday',    title:'大学英语',   room:'B-205', start:'10:00', end:'11:35' },
+  { day:'Monday',    title:'体育',       room:'操场',   start:'14:00', end:'15:35' },
+  { day:'Tuesday',   title:'线性代数',   room:'A-108', start:'08:00', end:'09:35' },
+  { day:'Tuesday',   title:'程序设计',   room:'机房2',  start:'10:00', end:'12:20' },
+  { day:'Tuesday',   title:'形势与政策', room:'C-401', start:'14:00', end:'15:35' },
+  { day:'Wednesday', title:'数据结构',   room:'A-215', start:'08:00', end:'10:25' },
+  { day:'Wednesday', title:'离散数学',   room:'A-112', start:'10:45', end:'12:20' },
+  { day:'Wednesday', title:'心理健康',   room:'D-203', start:'16:00', end:'17:35' },
+  { day:'Thursday',  title:'操作系统',   room:'A-301', start:'08:00', end:'09:35' },
+  { day:'Thursday',  title:'计算机组成', room:'A-303', start:'10:00', end:'11:35' },
+  { day:'Thursday',  title:'学术讲座',   room:'报告厅', start:'14:00', end:'15:35', temp:true },
+  { day:'Thursday',  title:'自习',       room:'图书馆', start:'19:00', end:'21:00' },
+  { day:'Friday',    title:'概率统计',   room:'A-207', start:'08:00', end:'09:35' },
+  { day:'Friday',    title:'数字逻辑',   room:'实验楼3', start:'10:00', end:'12:20' },
+  { day:'Friday',    title:'毛概',      room:'C-105', start:'14:00', end:'15:35' },
+  { day:'Saturday',  title:'创新创业',   room:'E-301', start:'09:00', end:'11:35' },
+  { day:'Sunday',    title:'线性代数(补)', room:'A-108', start:'09:00', end:'10:35', temp:true },
+];
+
+/* ── 工具：时间 ↔ 分钟 ── */
+const toMin = s => { const [h,m] = s.split(':').map(Number); return h*60+m; };
+const fmtMin = m => String(Math.floor(m/60)).padStart(2,'0') + ':' + String(m%60).padStart(2,'0');
+
+/* spanOf：本周 [最早开始, 最晚结束] */
+function spanOf(list) {
+  let from = Infinity, to = -Infinity;
+  list.forEach(c => {
+    const s = toMin(c.start), e = toMin(c.end);
+    if (s < from) from = s;
+    if (e > to) to = e;
+  });
+  return from === Infinity ? null : { start: from, end: to };
+}
+
+/* fractionOf：分钟 → 0..1 的纵向比例 */
+function fractionOf(minute, span) {
+  return Math.min(1, Math.max(0, (minute - span.start) / (span.end - span.start)));
+}
+
+/* roundMarks：span 内对齐到 step 整数倍的整点 */
+function roundMarks(span, stepMin) {
+  const first = Math.ceil(span.start / stepMin) * stepMin;
+  const out = [];
+  for (let m = first; m <= span.end; m += stepMin) out.push(m);
+  return out.length ? out : [span.start];
+}
+
+/* zebraBands：相位锚定 span 起点所在的那一小时，之后每隔一小时一条。
+   不按绝对偶数小时取 —— 起点常落在奇数小时（07:43 → 第 7 小时），
+   那样短跨度可能整段落进留白、一条带都没有 */
+function zebraBands(span) {
+  const hourOfStart = Math.floor(span.start / 60);
+  const bands = [];
+  while (bands.length < 24) {
+    const bs = (hourOfStart + bands.length * 2) * 60;
+    if (bs >= span.end) break;
+    const from = Math.max(bs, span.start);
+    const to = Math.min(bs + 60, span.end);
+    if (to > from) bands.push({ start: from, end: to });
+  }
+  return bands;
+}
+
+/* layout：同一天内，重叠的课归组、组内左右等分 */
+function layout(dayClasses, span) {
+  const timed = dayClasses
+    .map(c => ({ cls: c, s: toMin(c.start), e: Math.max(toMin(c.end), toMin(c.start)+1) }))
+    .sort((a,b) => a.s - b.s || a.e - b.e);
+  if (!timed.length) return [];
+
+  const out = [];
+  let groupStart = 0, runningEnd = timed[0].e;
+  for (let i = 1; i <= timed.length; i++) {
+    const next = timed[i];
+    if (!next || next.s >= runningEnd) {
+      out.push(...placeGroup(timed.slice(groupStart, i), span));
+      if (next) { groupStart = i; runningEnd = next.e; }
+    } else if (next.e > runningEnd) {
+      runningEnd = next.e;
+    }
+  }
+  return out;
+}
+function placeGroup(group, span) {
+  const share = 1 / group.length;
+  return group.map((g, i) => {
+    const top = fractionOf(g.s, span);
+    return {
+      cls: g.cls,
+      topFraction: top,
+      heightFraction: fractionOf(g.e, span) - top,
+      leftFraction: i * share,
+      widthFraction: share
+    };
+  });
+}
+
+/* ── 渲染一张网格 ── */
+function renderGrid(el, opts = {}) {
+  const {
+    compact = false,        // 窄屏模式
+    width = null,           // 容器宽度（px），不传则自适应
+    showZebra = true,
+    showColumnLines = true,
+    blockGap = 5,
+    headerDivider = true,
+    interactive = true,
+    activeDay = null        // 初始就高亮哪一列（null = 不预选）
+  } = opts;
+
+  const span = spanOf(CLASSES);
+
+  // 空列折叠：有课的天 ≥3 天才折叠，否则全画
+  const busy = DAYS.filter(d => CLASSES.some(c => c.day === d));
+  const days = busy.length >= 3 ? busy : DAYS;
+
+  const labelW = compact ? 30 : 48;
+
+  // 行数与高度：按 1 小时步长，最少 56px / 最多 108px 一行
+  const maxRows = 8;
+  const hoursPerRow = 1;
+  const rowCount = Math.max(1, Math.ceil((span.end - span.start) / (hoursPerRow * 60)));
+  const availH = Math.min(rowCount, maxRows) * 76;
+  const rowH = Math.min(108, Math.max(56, availH / rowCount));
+  const gridH = rowH * rowCount;
+
+  // 字号：按列宽分档，窄屏再乘 0.92
+  const totalW = width || el.clientWidth || 900;
+  const gridW = totalW - labelW - 8;
+  const cellW = Math.min(76, gridW / days.length);
+  const scale = compact ? 0.92 : 1;
+  let titleSize = cellW >= 62 ? 12 : cellW >= 52 ? 11 : 10;
+  let roomSize  = cellW >= 58 ? 10 : 9;
+  titleSize *= scale; roomSize *= scale;
+
+  // ── 表头 ──
+  const head = document.createElement('div');
+  head.className = 'week-head';
+  head.style.setProperty('--label-w', labelW + 'px');
+  if (!headerDivider) head.style.borderBottom = 'none';
+
+  const spacer = document.createElement('div');
+  spacer.className = 'axis-spacer';
+  head.appendChild(spacer);
+
+  days.forEach(day => {
+    const cell = document.createElement('div');
+    cell.className = 'head-cell';
+    if (day === TODAY) cell.classList.add('is-today');
+    cell.dataset.day = day;
+
+    const name = document.createElement('span');
+    name.className = 'day-name';
+    name.textContent = DAY_LABEL[day];
+    cell.appendChild(name);
+
+    if (day === TODAY) {
+      const badge = document.createElement('span');
+      badge.className = 'today-badge';
+      badge.textContent = '今日';
+      cell.appendChild(badge);
+    }
+
+    if (interactive) {
+      // 点击选中该列（再点取消）
+      cell.addEventListener('click', () => {
+        const wasActive = cell.classList.contains('is-active');
+        head.querySelectorAll('.head-cell').forEach(c => c.classList.remove('is-active'));
+        el.querySelectorAll('.day-col').forEach(c => c.classList.remove('is-active'));
+        if (!wasActive) {
+          cell.classList.add('is-active');
+          const col = el.querySelector(`.day-col[data-day="${day}"]`);
+          if (col) col.classList.add('is-active');
+        }
+      });
+    }
+    head.appendChild(cell);
+  });
+  el.appendChild(head);
+
+  // ── 主体 ──
+  const body = document.createElement('div');
+  body.className = 'week-body';
+  body.style.height = gridH + 'px';
+  body.style.setProperty('--label-w', labelW + 'px');
+
+  // 刻度栏
+  const axis = document.createElement('div');
+  axis.className = 'axis';
+  const marks = roundMarks(span, 3600);   // 每小时一个整点
+  const MIN_GAP = 15;
+  let lastY = -Infinity;
+  marks.forEach(m => {
+    const y = Math.max(0, gridH * fractionOf(m, span) - 8);
+    if (y - lastY >= MIN_GAP) {
+      lastY = y;
+      const lab = document.createElement('div');
+      lab.className = 'axis-label';
+      lab.style.top = y + 'px';
+      lab.textContent = fmtMin(m);
+      axis.appendChild(lab);
+    }
+  });
+  body.appendChild(axis);
+
+  // 底纹层
+  const lines = document.createElement('div');
+  lines.className = 'grid-lines';
+  lines.style.setProperty('--label-w', labelW + 'px');
+
+  if (showZebra) {
+    zebraBands(span).forEach(b => {
+      const band = document.createElement('div');
+      band.className = 'zebra-band';
+      band.style.top = (gridH * fractionOf(b.start, span)) + 'px';
+      band.style.height = (gridH * (fractionOf(b.end, span) - fractionOf(b.start, span))) + 'px';
+      lines.appendChild(band);
+    });
+  }
+  marks.forEach(m => {
+    const line = document.createElement('div');
+    line.className = 'grid-hline';
+    line.style.top = (gridH * fractionOf(m, span)) + 'px';
+    lines.appendChild(line);
+  });
+  if (showColumnLines) {
+    // 列边界：只在列与列之间画，最右一条不画
+    for (let i = 1; i < days.length; i++) {
+      const v = document.createElement('div');
+      v.className = 'grid-vline';
+      v.style.left = (labelW + cellW * i) + 'px';
+      lines.appendChild(v);
+    }
+  }
+  body.appendChild(lines);
+
+  // 七天列
+  const cols = document.createElement('div');
+  cols.className = 'days';
+  days.forEach(day => {
+    const col = document.createElement('div');
+    col.className = 'day-col';
+    if (day === TODAY) col.classList.add('is-today');
+    col.dataset.day = day;
+    col.style.flex = `1 1 0`;
+
+    const dayClasses = CLASSES.filter(c => c.day === day);
+    layout(dayClasses, span).forEach(spot => {
+      const blockH = Math.max(30, gridH * spot.heightFraction);
+      const showRoom = blockH >= 46;
+      // 字号自适应：块越高字越大
+      const fScale = Math.min(1, Math.max(0.62, blockH / 80));
+
+      const block = document.createElement('div');
+      block.className = 'block';
+      block.style.top = (gridH * spot.topFraction) + 'px';
+      block.style.height = blockH + 'px';
+      block.style.left = (spot.leftFraction * 100) + '%';
+      block.style.width = (spot.widthFraction * 100) + '%';
+      block.style.padding = (blockGap / 2) + 'px';
+
+      const inner = document.createElement('div');
+      inner.className = 'block-inner';
+      if (spot.cls.temp) inner.classList.add('is-temp');
+      inner.style.setProperty('--block-title-size', (titleSize * fScale) + 'px');
+      inner.style.setProperty('--block-room-size', (roomSize * fScale) + 'px');
+
+      const bar = document.createElement('div');
+      bar.className = 'block-bar';
+      inner.appendChild(bar);
+
+      const content = document.createElement('div');
+      content.className = 'block-content';
+      const t = document.createElement('div');
+      t.className = 'block-title';
+      t.textContent = spot.cls.title;
+      content.appendChild(t);
+      if (showRoom && spot.cls.room) {
+        const r = document.createElement('div');
+        r.className = 'block-room';
+        r.textContent = spot.cls.room;
+        content.appendChild(r);
+      }
+      inner.appendChild(content);
+      block.appendChild(inner);
+      col.appendChild(block);
+
+      // ── 悬停整列：鼠标进入任意块 → 整列 + 表头一起亮 ──
+      if (interactive) {
+        inner.addEventListener('mouseenter', () => {
+          col.classList.add('is-hover');
+          const hc = head.querySelector(`.head-cell[data-day="${day}"]`);
+          if (hc) hc.classList.add('is-hover');
+        });
+        inner.addEventListener('mouseleave', () => {
+          col.classList.remove('is-hover');
+          const hc = head.querySelector(`.head-cell[data-day="${day}"]`);
+          if (hc) hc.classList.remove('is-hover');
+        });
+
+        // ── 第一次点下就强制高亮（对应源码的 onPress → onSelect） ──
+        // 源码里 onTap 要等双击判定窗口关闭（约 300ms）才回调，那段时间块是「没反应」的，
+        // 所以高亮提前到 onPress：按下的当帧就亮，单击/双击共用这一次高亮。
+        // onSelect 幂等（只切 class），所以后面 click 再触发一次也无副作用
+        inner.addEventListener('mousedown', e => {
+          e.stopPropagation();
+          el.querySelectorAll('.block-inner.is-selected')
+            .forEach(b => b.classList.remove('is-selected'));
+          inner.classList.add('is-selected');
+        });
+
+        // ── 单击 = 仅高亮（onSelect）；双击 = 进编辑（onEdit） ──
+        // 与 Compose 侧一致：clickable 只吃语义，判定交给双击窗口
+        inner.addEventListener('click', e => {
+          e.stopPropagation();
+          // mousedown 已经高亮过了，这里只是兜底（键盘触发 click 时没有 mousedown）
+          if (!inner.classList.contains('is-selected')) {
+            el.querySelectorAll('.block-inner.is-selected')
+              .forEach(b => b.classList.remove('is-selected'));
+            inner.classList.add('is-selected');
+          }
+        });
+        inner.addEventListener('dblclick', e => {
+          e.stopPropagation();
+          const toast = document.getElementById('block-toast');
+          if (!toast) return;
+          toast.textContent = `进入编辑：${spot.cls.title}（${DAY_LABEL[day]} ${spot.cls.start || ''}）`;
+          toast.classList.add('show');
+          clearTimeout(window.__blockToastTimer);
+          window.__blockToastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
+        });
+
+        // 点空白（网格底纹）取消选中
+        if (!el.dataset.deselectBound) {
+          el.dataset.deselectBound = '1';
+          el.addEventListener('click', () => {
+            el.querySelectorAll('.block-inner.is-selected')
+              .forEach(b => b.classList.remove('is-selected'));
+          });
+        }
+      }
+    });
+
+    cols.appendChild(col);
+  });
+  body.appendChild(cols);
+  el.appendChild(body);
+
+  // 初始高亮：非今日列默认用灰色，今日用蓝 —— 与源码的「今日=蓝 / 非今日=灰」一致
+  if (activeDay) {
+    const hc = head.querySelector(`.head-cell[data-day="${activeDay}"]`);
+    const cc = el.querySelector(`.day-col[data-day="${activeDay}"]`);
+    if (hc) hc.classList.add('is-active');
+    if (cc) cc.classList.add('is-active');
+  }
+}
+
+/* ══════════════ 表格课程块交互（对应 WeekGrid / GridCell） ══════════════
+   复刻源码中的：
+     GridCell(isToday, selected, onSelect, onEdit)
+     clickable(onClick = {}) + pointerInput { detectTapGestures(onTap = onSelect,
+                                                              onDoubleTap = onEdit) }
+   单击 → 只高亮；双击 → 进编辑；点空白 → 取消。
+   色条按 isToday 分流：今日 = primary（蓝），非今日 = surfaceVariant / outlineVariant（灰）
+   ────────────────────────────────────────────────────────────────── */
+const TODAY_DAY = 'Tuesday';   // 验收页统一约定「今日 = 周二」
+
+/* 课程数据用 renderGrid 内置的 CLASSES（见页面顶部），
+   此处只负责初始化那个「可选中」的网格实例 */
+
+/* ── 初始化各分区 ── */
+// 表格课程块交互专区：可单击选中 / 双击编辑
+renderGrid(document.getElementById('select-grid'), { interactive: true });
+
+// 高亮修复专区：默认就高亮「周四」（非今日 → 灰），对比周二（今日 → 蓝）
+renderGrid(document.getElementById('fix-grid'), { activeDay: 'Thursday' });
+renderGrid(document.getElementById('legacy-grid'), {
+  showZebra: false, showColumnLines: false, blockGap: 0, headerDivider: false
+});
+renderGrid(document.getElementById('new-grid'));
+renderGrid(document.getElementById('zebra-grid'));
+renderGrid(document.getElementById('interact-grid'));
+renderGrid(document.getElementById('phone-grid'), { compact: true, width: 344 });
+
+/* ── 工具栏交互 ── */
+document.getElementById('btn-theme').addEventListener('click', () => {
+  document.body.classList.toggle('dark');
+});
+
+let loose = true;
+document.getElementById('btn-zoom').addEventListener('click', e => {
+  loose = !loose;
+  e.target.textContent = loose ? '列宽：宽松' : '列宽：紧凑';
+  // 紧凑：整页宽度收窄，模拟更小的设备
+  document.querySelector('.shell').style.maxWidth = loose ? '1180px' : '760px';
+});
+
+document.getElementById('btn-hover-demo').addEventListener('click', () => {
+  // 演示悬停效果：让周四（今天）那一列闪一下
+  const card = document.getElementById('interact-grid');
+  const col = card.querySelector('.day-col[data-day="Thursday"]');
+  const hc = card.querySelector('.head-cell[data-day="Thursday"]');
+  if (!col) return;
+  col.classList.add('is-hover'); if (hc) hc.classList.add('is-hover');
+  setTimeout(() => { col.classList.remove('is-hover'); if (hc) hc.classList.remove('is-hover'); }, 1400);
+});
+</script>
+
+</body>
+</html>
