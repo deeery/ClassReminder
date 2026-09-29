@@ -29,6 +29,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -120,7 +121,8 @@ private val dayLabel = mapOf(
 /** 卡片圆角半径。单独抽成 Dp 是因为自绘描边要拿它当 `CornerRadius` 用 */
 private val SHAPE_CARD_RADIUS = 14.dp
 private val SHAPE_CARD = RoundedCornerShape(SHAPE_CARD_RADIUS)
-private val SHAPE_SMALL = RoundedCornerShape(8.dp)
+private val SHAPE_SMALL_RADIUS = 8.dp
+private val SHAPE_SMALL = RoundedCornerShape(SHAPE_SMALL_RADIUS)
 private val SHAPE_CHIP = RoundedCornerShape(50)
 
 /** 课表列表卡片：竖条占位宽度 */
@@ -374,6 +376,9 @@ private data class HighlightSpec(
          * @param baseTitle 未高亮时的标题色
          * @param selection 手动选中进度 0 → 1
          * @param accent 弱高亮（今天那一列）开关
+         * @param isToday 这一项是不是「今天」。**决定选中色条走蓝还是走灰**：
+         *   今日 = 主色（强调，对应用户说的「当前颜色」），非今日 = 中性灰。
+         *   浏览多日课表时，一眼就能分出「这是今天选中的」和「这是别的天选中的」。
          * @param pressed 正被按住
          * @param hovering 正被悬停 / 聚焦
          */
@@ -383,12 +388,21 @@ private data class HighlightSpec(
             baseTitle: Color,
             selection: Float,
             accent: Float = 0f,
+            isToday: Boolean = true,
             pressed: Boolean = false,
             hovering: Boolean = false
         ): HighlightSpec {
             val scheme = MaterialTheme.colorScheme
             val primary = scheme.primary
             val isDark = scheme.surface.luminance() < 0.5f
+
+            // ── 选中态的主色：今日 = 蓝（primary），非今日 = 灰 ──
+            // 灰不能用 onSurface 调 α：深色下 surface 与 onSurface 只差 1.78:1，等于没铺。
+            // 浅色走 outlineVariant 压深、深色走 surfaceVariant —— 都是「比背景深一档」的中性色，
+            // 目的是让色条**可见但不抢眼**，把注意力留给真正今天的那个蓝条目。
+            val selectColor = if (isToday) primary else {
+                if (isDark) scheme.surfaceVariant else scheme.outlineVariant
+            }
 
             // ── 四级强度收敛成一条 0 → 1 的顺序刻度 ──
             // 弱高亮(1) < 悬停(2) < 按下(3) < 选中(4)。
@@ -413,53 +427,73 @@ private data class HighlightSpec(
             // ── 描边色：浅色下走中性灰（主题的 outline，对白卡片 1.76:1；
             //    原来用 α0.07 的 onSurface 只有 1.05:1，等于没有）。
             //    深色下不能走灰 —— onSurface 是浅灰、surface 是深灰，两者只差 1.78:1，
-            //    在深底上「悄悄出现一条灰线」根本看不见，所以改走主色，靠透明度给强度 ──
+            //    在深底上「悄悄出现一条灰线」根本看不见，所以改走主色，靠透明度给强度。
+            //    注意终点用 selectColor：选中态下今日描蓝边、非今日描灰边，与竖条同色系 ──
             val borderColor = if (isDark) {
                 lerpColor(
                     scheme.outline.copy(alpha = 1f),
-                    primary.copy(alpha = lerp(0.30f, 0.72f, level)),
+                    selectColor.copy(alpha = lerp(0.30f, 0.72f, level)),
                     level
                 )
             } else {
-                lerpColor(scheme.outline.copy(alpha = 0.78f), primary, level)
+                lerpColor(scheme.outline.copy(alpha = 0.78f), selectColor, level)
             }
 
-            // ── 竖条：未高亮只有在弱高亮时才显形；选中后换成纵向渐变（有光感、有方向）──
+            // ── 竖条：未高亮只有在弱高亮时才显形；选中后换成纵向渐变（有光感、有方向）。
+            //    颜色跟随 selectColor —— 今日走蓝、非今日走灰 ──
             val barBrush: Brush = when {
                 level > 0.01f -> Brush.verticalGradient(
                     colors = listOf(
-                        primary.copy(alpha = lerp(0.55f, 1.00f, level)),
-                        primary.copy(alpha = lerp(0.35f, 0.48f, level))
+                        selectColor.copy(alpha = lerp(0.55f, 1.00f, level)),
+                        selectColor.copy(alpha = lerp(0.35f, 0.48f, level))
                     )
                 )
-                weak > 0f -> SolidColor(primary.copy(alpha = 0.30f))
-                else -> SolidColor(primary.copy(alpha = 0.16f))
+                weak > 0f -> SolidColor(selectColor.copy(alpha = 0.30f))
+                else -> SolidColor(selectColor.copy(alpha = 0.16f))
             }
 
             // ── 底色：选中时向 primaryContainer 混合。深色下的 primaryContainer(0xFF16406B)
-            //    本身太暗，混 72% 也只比 surface 亮一点点，卡片「亮起来」几乎不可见 —— 所以调高比例 ──
-            val containerColor = lerpColor(
-                baseContainer,
-                primaryContainerFor(scheme, isDark),
-                selection * if (isDark) TINT_MIX_DARK else TINT_MIX_LIGHT
-            )
+            //    本身太暗，混 72% 也只比 surface 亮一点点，卡片「亮起来」几乎不可见 —— 所以调高比例。
+            //    非今日不走 primaryContainer（那是蓝的），改用 selectColor 弱混 ——
+            //    灰条目的底只轻微加深一点，把「蓝 = 今天」这个信号独占给今日项 ──
+            val containerColor = if (isToday) {
+                lerpColor(
+                    baseContainer,
+                    primaryContainerFor(scheme, isDark),
+                    selection * if (isDark) TINT_MIX_DARK else TINT_MIX_LIGHT
+                )
+            } else {
+                lerpColor(
+                    baseContainer,
+                    selectColor.copy(alpha = 1f),
+                    selection * if (isDark) 0.22f else 0.30f
+                )
+            }
 
             // ── 标题色：浅色下加深（onPrimaryContainer 是深蓝，和浅蓝底对比 4.5:1 以上）；
             //    深色下如果让它去靠近 onPrimaryContainer(0xFFD6E4FF) 反而会**变亮**、和底色的
-            //    对比不升反降，所以深色只轻微靠拢，靠底色变深来拉开对比 ──
-            val titleColor = lerpColor(
-                baseTitle,
-                scheme.onPrimaryContainer,
-                selection * if (isDark) TITLE_TINT_DARK else TITLE_TINT_LIGHT
-            )
+            //    对比不升反降，所以深色只轻微靠拢，靠底色变深来拉开对比。
+            //    非今日不染蓝：保持原本的主文字色，靠色条和描边表达「选中」即可 ──
+            val titleColor = if (isToday) {
+                lerpColor(
+                    baseTitle,
+                    scheme.onPrimaryContainer,
+                    selection * if (isDark) TITLE_TINT_DARK else TITLE_TINT_LIGHT
+                )
+            } else {
+                baseTitle
+            }
 
             return HighlightSpec(
                 barBrush = barBrush,
                 barWidth = barWidth,
                 borderColor = borderColor,
                 borderWidth = borderWidth,
-                glowColor = primary.copy(
-                    alpha = if (isDark) GLOW_A_DARK * strong else GLOW_A_LIGHT * strong
+                // 光晕跟竖条同色：非今日是灰条目，发蓝光会显得「两张卡不是一套」。
+                // α 比主色光晕略收 —— 灰本身不抢眼，光晕太亮反而突兀
+                glowColor = selectColor.copy(
+                    alpha = (if (isDark) GLOW_A_DARK else GLOW_A_LIGHT) * strong *
+                        (if (isToday) 1f else 0.7f)
                 ),
                 containerColor = containerColor,
                 titleColor = titleColor
@@ -1716,7 +1750,13 @@ private fun TodayHeaderBadge() {
             .background(MaterialTheme.colorScheme.primary, SHAPE_CHIP)
             .padding(horizontal = 5.dp, vertical = 0.5.dp)
     ) {
-        Text("今日", fontSize = 9.sp, color = MaterialTheme.colorScheme.onPrimary, maxLines = 1)
+        Text(
+            "今日",
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onPrimary,
+            maxLines = 1
+        )
     }
 }
 
@@ -1841,6 +1881,15 @@ private val BLOCK_ROOM_MIN_HEIGHT = 46.dp
 private val GRID_HEADER_HEIGHT = 46.dp
 
 /**
+ * 表头里星期文字下方留的呼吸空间。
+ *
+ * **必须做在表头格子内部**（当 `padding(bottom)` 用），不能做在整行 Row 上：
+ * 做在 Row 上等于在表头底与列身顶之间挖一条没有底色的透明带，
+ * 高亮列就会被这条带子切成「上深下浅」两截。做进格子里，底色仍然铺满。
+ */
+private val HEADER_GAP = 6.dp
+
+/**
  * 网格底纹的透明度：横向时刻线 / 竖向列分隔。
  *
  * 两者都是**底纹**而不是内容，所以都比课程块淡得多。竖线刻意比横线再淡一档：
@@ -1850,8 +1899,35 @@ private val GRID_HEADER_HEIGHT = 46.dp
 private const val GRID_LINE_ALPHA = 0.08f
 private const val GRID_COLUMN_ALPHA = 0.05f
 
+/**
+ * 「斑马纹」底纹的透明度：按小时交替铺一层极淡的横向色带。
+ *
+ * 网格是按时间轴定位的，没有网页表格那种「行」，但**时间本身就是行**——
+ * 每一小时就是一行。按奇偶小时交替铺底，眼睛扫一行时有了参照物，
+ * 定位「这是第几节」不用每次回到左边读刻度。
+ *
+ * 比横线还淡（横线 0.08）：它是**背景的背景**，一旦能明显看出来就会盖过课程块。
+ * 0.03 是在浅色下刚好「若有若无」、深色下不至于消失的临界值。
+ */
+private const val ZEBRA_ALPHA = 0.03f
+
 /** 单列最大宽度，免得大屏上几列被拉得太开 */
 private val MAX_COLUMN_WIDTH = 76.dp
+
+/**
+ * 「窄屏」断点。窄于这个宽度时整套尺寸降一档（时间栏收窄、今天列少加宽、字号减小）。
+ *
+ * 取 360dp：这是最主流的手机竖屏可用宽度（360×640 的逻辑像素），
+ * 七天 + 时间栏塞进来的话每列只剩 40dp 上下，正好是「放得下两个字」的临界线。
+ * 再窄（小屏手机 / 分屏）就靠横向滚动兜底，不强行继续压。
+ */
+private val COMPACT_BREAKPOINT = 360.dp
+
+/**
+ * 窄屏下整套尺寸的统一缩放。0.92 是「明显小一点但不至于小到难读」的经验值 ——
+ * 12sp 的标题缩到 11sp，仍在可读范围内；再往下到 10sp，中文笔画就开始糊了。
+ */
+private const val COMPACT_SCALE = 0.92f
 
 /** 今天那一列的加宽系数，保证课程名不被截断；配合纵轴的放大一起调整 */
 private const val TODAY_COLUMN_SCALE = 1.35f
@@ -1881,6 +1957,14 @@ fun WeekGrid(
         pickedDay != null -> pickedDay
         else -> highlightDay
     }
+    // 鼠标悬停在哪一列上（桌面端）。格子里的小块几十个，独占一行时只有一块能拿到 hover，
+    // 但用户想看的是「这一整列」—— 所以状态提升到这里，由格子往上报，整列一起亮。
+    // 这是**比手动选中更弱**的一档：悬停只是「预告」，不该和真正选中的列抢眼。
+    var hoveredDay by remember { mutableStateOf<String?>(null) }
+    // 当前被单击选中的课程块。单击只高亮、不进编辑；双击才进编辑。
+    // 和列表界面（WeekDayList）用同一个状态语义，两个界面的手感一致。
+    // 不 remember 到 highlightDay 上：换周也该保留选中（用户可能只是想对照着看）
+    var selectedClassId by remember { mutableStateOf<Int?>(null) }
     if (span == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
@@ -1906,8 +1990,12 @@ fun WeekGrid(
             if (busy.size >= 3) busy else dayOrder
         }
 
-        // 时间列约占 12% 宽（夹在 38~58dp）
-        val labelWidth = (maxWidth * 0.12f).coerceIn(38.dp, 58.dp)
+        // 时间列约占 12% 宽（夹在 38~58dp）。
+        // 窄屏（手机竖屏）下 12% 会小于 38dp，所以下限要按屏宽再压一档 ——
+        // 否则七天挤完后每列只剩 30dp 出头，课程名一个字都放不下。
+        val compact = maxWidth < COMPACT_BREAKPOINT
+        val labelWidth = (maxWidth * 0.12f)
+            .coerceIn(if (compact) 30.dp else 38.dp, 58.dp)
 
         // 每列平分剩余宽度（不超过上限，免得大屏上被拉得太开）；
         // 今天那一列再稍微加宽一点，保证内容不被截断，多出来的宽度从其它列均摊。
@@ -1915,8 +2003,11 @@ fun WeekGrid(
         val normalWidth = (gridWidth / days.size).coerceAtMost(MAX_COLUMN_WIDTH)
         val todayIndex = days.indexOf(activeDay)
         val hasToday = todayIndex >= 0 && days.size > 1
+        // 窄屏下今天列的加宽系数要收小：本来就窄，再按 1.35 放大，
+        // 其余六列会被挤到 28dp 以下，全变成只有一个字的竖条
+        val todayScale = if (compact) 1.15f else TODAY_COLUMN_SCALE
         val todayWidth = if (hasToday) {
-            (normalWidth * TODAY_COLUMN_SCALE).coerceAtMost(MAX_COLUMN_WIDTH)
+            (normalWidth * todayScale).coerceAtMost(MAX_COLUMN_WIDTH)
         } else normalWidth
         val otherWidth = if (hasToday) {
             ((gridWidth - todayWidth) / (days.size - 1)).coerceAtMost(MAX_COLUMN_WIDTH)
@@ -1937,12 +2028,15 @@ fun WeekGrid(
         }
 
         val cellWidth = normalWidth
+        // 窄屏下整套字号再乘一档。这里的阈值按**实际列宽**分档而不是按屏宽：
+        // 列宽是最终决定「能放几个字」的量，屏宽只是它的间接来源
+        val sizeScale = if (compact) COMPACT_SCALE else 1f
         val titleSize = when {
             cellWidth >= 62.dp -> 12.sp
             cellWidth >= 52.dp -> 11.sp
             else -> 10.sp
-        }
-        val roomSize = if (cellWidth >= 58.dp) 10.sp else 9.sp
+        } * sizeScale
+        val roomSize = (if (cellWidth >= 58.dp) 10.sp else 9.sp) * sizeScale
         val titleLines = if (cellWidth >= 54.dp) 3 else 2
 
         // 纵向比例：按可用高度估算「放得下几行」，据此决定整张表是铺满一屏还是需要滚动。
@@ -1996,6 +2090,11 @@ fun WeekGrid(
         val labelWidthPx = with(LocalDensity.current) { labelWidth.toPx() }
         val gridHeightPx = with(LocalDensity.current) { gridHeight.toPx() }
         val lineBase = MaterialTheme.colorScheme.onSurface
+        // 表头下的分隔线。不能用网格的横线浓度（0.08），那是「底纹」；
+        // 这是真正的结构线，要一眼看得见，取 outline 的中等浓度
+        val headerDivider = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+        // 斑马纹的色带位置。跟 span / 映射有关，与点击、悬停无关，算一次缓存住
+        val zebraBands = remember(span, mapping) { TimeAxis.zebraBands(span) }
 
         Column(
             modifier = Modifier
@@ -2005,29 +2104,111 @@ fun WeekGrid(
         ) {
             // 表头：星期。点一下把那一列高亮起来（左侧刻度跟着换成它的时刻、列也加宽）；
             // 点已经高亮的那一列则全部取消，左侧退回固定间隔。
-            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                Box(modifier = Modifier.width(labelWidth))
+            //
+            // **表头与列身之间不能留缝**：Row 本身不再挂 `padding(bottom)` ——
+            // 挂了的话那一段高度没有底色，表头底与列身底之间会夹出一条透明带，
+            // 高亮列看起来就是「上下两截颜色不一致」。改为把间距做进**表头格子内部**
+            // （见下方 Box 的 `padding(bottom = HEADER_GAP)`），底色仍然铺满整格。
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .drawBehind {
+                        val strokeWidth = 1.dp.toPx()
+                        drawLine(
+                            color = headerDivider,
+                            start = Offset(0f, size.height - strokeWidth / 2),
+                            end = Offset(size.width, size.height - strokeWidth / 2),
+                            strokeWidth = strokeWidth
+                        )
+                    }
+            ) {
+                // 左侧刻度栏的占位。**必须是完全透明的空白** ——
+                // 这里一旦有底色，就会在表头最左边形成一个独立色块，
+                // 和下方列身的边界拼起来像「从表头伸出一根多余竖条」。
+                // 网格主体对应位置也是空白（只有刻度文字），两边一致才连贯
+                Box(modifier = Modifier.width(labelWidth).height(GRID_HEADER_HEIGHT))
                 days.forEachIndexed { index, day ->
                     val isActive = day == activeDay
-                    // 高亮切换时星期文字的颜色渐变过去，不是直接跳色
+                    // 悬停时提前给一点反馈：桌面端鼠标移上来就知道「这一列可以点」。
+                    // 列身里悬停某个块时，这一列的表头也跟着亮 —— 表头是列的「名字」，
+                    // 列身亮了表头不亮，会让人以为亮的是某个格子而不是整列
+                    val headerInteraction = remember { MutableInteractionSource() }
+                    val headerHoverSelf = rememberHoverProgress(headerInteraction)
+                    val headerHoverRaw = maxOf(headerHoverSelf, if (day == hoveredDay) 1f else 0f)
+                    val headerHover by animateFloatAsState(
+                        targetValue = headerHoverRaw,
+                        animationSpec = tween(HOVER_MS),
+                        label = "headerHover"
+                    )
+                    // 高亮切换时星期文字的颜色渐变过去，不是直接跳色。
+                    // 三级色阶（Vercel 的 400/500/600 字重思路在颜色上的对应）：
+                    // 普通日 → 次要色；悬停 → 向主文字色靠；选中 → 主色。
+                    // 原来普通日是 onSurface α0.7，和选中列的主色之间只差一个色相，层级不明显
+                    val inactiveHeader = MaterialTheme.colorScheme.onSurfaceVariant
                     val headerColor by animateColorAsState(
-                        targetValue = if (isActive) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        targetValue = when {
+                            isActive -> MaterialTheme.colorScheme.primary
+                            headerHoverRaw > 0.01f -> lerpColor(
+                                inactiveHeader,
+                                MaterialTheme.colorScheme.onSurface,
+                                headerHoverRaw
+                            )
+                            else -> inactiveHeader
+                        },
                         animationSpec = tween(ENTER_MS),
                         label = "dayHeaderColor"
                     )
-                    // 悬停时提前给一点反馈：桌面端鼠标移上来就知道「这一列可以点」
-                    val headerInteraction = remember { MutableInteractionSource() }
-                    val headerHover = rememberHoverProgress(headerInteraction)
                     // 高亮列的底色作为「列高亮」的一部分，从表头一直铺到时间轴，
-                    // 表头和列身用同一个底色，整列看起来才是一块整体
-                    val headerTint = MaterialTheme.colorScheme.primary.copy(
-                        alpha = lerp(0.06f, 0.12f, maxOf(if (isActive) 1f else 0f, headerHover * 0.7f))
-                    )
+                    // 表头和列身用同一个底色，整列看起来才是一块整体。
+                    //
+                    // 配色与 DayColumn 严格一致：**今日走主色（蓝），非今日走中性灰**。
+                    // 之前两者都用 primary 只差 α，在截图里根本分不出是「今天」还是「用户选的」
+                    val isTodayCol = day == highlightDay
+                    val headerIsDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+                    val headerAccent = when {
+                        isTodayCol -> MaterialTheme.colorScheme.primary
+                        headerIsDark -> MaterialTheme.colorScheme.surfaceVariant
+                        else -> MaterialTheme.colorScheme.outlineVariant
+                    }
+                    val headerTintAlpha = when {
+                        isActive && isTodayCol && headerIsDark -> 0.34f
+                        isActive && isTodayCol -> 0.14f
+                        isActive && headerIsDark -> 0.85f
+                        isActive -> 0.75f
+                        // 未选中但「是今天」：给一层很弱的底色，让今天始终有存在感。
+                        // 这样即使手动高亮了别的列，也能一眼看出「今天在哪」——
+                        // 光靠一个 9sp 的小角标，注意力被高亮列抢走后就看不见了。
+                        // **数值必须与 DayColumn 的 todayBaseTint 一致**，否则表头与列身的
+                        // 深浅对不上，整列会显得「头重脚轻」
+                        isTodayCol -> if (headerIsDark) 0.07f else 0.035f
+                        // 未选中且非今日：悬停时给一点点底，仍是主色的弱态
+                        else -> lerp(0f, 0.10f, headerHover)
+                    }
+                    val headerTint = (
+                        if (isActive) headerAccent
+                        else MaterialTheme.colorScheme.primary
+                        ).copy(alpha = headerTintAlpha)
+                    // 今日列单独给一条下划线（压在分隔线上方），让「今天」不只是靠一个小角标
+                    val todayUnderline = if (isTodayCol) {
+                        MaterialTheme.colorScheme.primary.copy(
+                            alpha = lerp(0.45f, 0.75f, if (isActive) 1f else headerHover)
+                        )
+                    } else Color.Transparent
                     Box(
                         modifier = Modifier
                             .width(columnWidths[index])
-                            .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
+                            // 表头格子**占满整段表头高度**（含下方留白区），底色才能一路铺到
+                            // 列身顶上、与列身无缝相接。宽度与高度都写死，行列才能严格对齐
+                            .height(GRID_HEADER_HEIGHT)
+                            // 只保留**最外侧**的圆角：整条表头是一个连续的带子，
+                            // 每列各自圆角会在列间切出一串缺口，露出背景形成「黑色断层」。
+                            // 首列圆左上、末列圆右上，中间列不圆
+                            .clip(
+                                RoundedCornerShape(
+                                    topStart = if (index == 0) 8.dp else 0.dp,
+                                    topEnd = if (index == days.lastIndex) 8.dp else 0.dp
+                                )
+                            )
                             .background(headerTint)
                             .clickable(
                                 interactionSource = headerInteraction,
@@ -2041,14 +2222,31 @@ fun WeekGrid(
                                     cleared = false
                                 }
                             }
-                            .padding(vertical = 4.dp),
+                            .drawBehind {
+                                if (todayUnderline != Color.Transparent) {
+                                    val h = 2.dp.toPx()
+                                    drawRect(
+                                        color = todayUnderline,
+                                        topLeft = Offset(0f, size.height - h),
+                                        size = Size(size.width, h)
+                                    )
+                                }
+                            }
+                            // 文字区域往上收，把 HEADER_GAP 留在格子**内部**的底部：
+                            // 底色依然覆盖这 6dp，表头与列身之间就不会出现无色断层
+                            .padding(top = 6.dp, bottom = HEADER_GAP),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
                                 text = dayLabel[day] ?: day,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
+                                // 选中 / 悬停时加一档字重，文字本身也跟着「站起来」。
+                                // 600 是上限：表头是导航性质的标签，不是内容
+                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.SemiBold,
+                                // 字距收紧一点：中文星期只有两字，默认字距会显得松散，
+                                // 收紧后表头更像一个「标签」而不是「一句话」
+                                letterSpacing = 0.2.sp,
                                 color = headerColor,
                                 textAlign = TextAlign.Center,
                                 maxLines = 1
@@ -2064,6 +2262,18 @@ fun WeekGrid(
             }
 
             Box(modifier = Modifier.fillMaxWidth().height(gridHeight)) {
+                // 点空白处取消选中：和便签页同款做法。
+                // 挂在底层 Box 上是因为课程块自己会消费掉 down（clickable +
+                // pointerInput 的手势层），所以这里**只接住没人要的**点击 —— 落在网格底纹
+                // 或列间空白上的那一下。detectTapGestures 用 `awaitFirstDown(requireUnconsumed = true)`，
+                // 块已经消费过的 down 不会再传过来，因此不会误把「点课程块」当成「点空白」
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectTapGestures { selectedClassId = null }
+                        }
+                )
                 // ── 底层：时间轴（竖向列分隔 + 横向时刻线 + 左侧刻度）──
                 // 横线从刻度栏右侧铺到最右；每一条都对齐一个真实时刻，和标签一一对应。
                 // 新旧两套刻度各带一个 alpha，交叉淡入淡出。
@@ -2090,6 +2300,21 @@ fun WeekGrid(
                     modifier = Modifier
                         .fillMaxSize()
                         .drawBehind {
+                            // ── 斑马纹：按小时交替的横向底纹 ──
+                            // 画在最底层，横线 / 竖线 / 课程块都压在它上面。
+                            // 只铺到刻度栏右侧（和横线同一起点），左侧的刻度区保持干净
+                            zebraBands.forEach { band ->
+                                val y0 = mapping.fractionOf(band.startMinute) * gridHeightPx
+                                val y1 = mapping.fractionOf(band.endMinute) * gridHeightPx
+                                val h = y1 - y0
+                                if (h <= 0.5f) return@forEach
+                                drawRect(
+                                    color = lineBase.copy(alpha = ZEBRA_ALPHA),
+                                    topLeft = Offset(labelWidthPx, y0),
+                                    size = Size(size.width - labelWidthPx, h)
+                                )
+                            }
+
                             fun drawMarks(marks: List<Int>, alpha: Float) {
                                 if (alpha <= 0.01f) return
                                 marks.forEach { minute ->
@@ -2133,9 +2358,24 @@ fun WeekGrid(
                             mapping = mapping,
                             gridHeight = gridHeight,
                             highlighted = day == activeDay,
+                            // 「今天」由 highlightDay 决定，跟手动高亮哪一列无关。
+                            // 今日列与非今日列走两套截然不同的高亮色（蓝 / 灰）
+                            isToday = day == highlightDay,
+                            // 悬停整列：这一列里只要有一个块被悬停，整列轻亮。
+                            // 「选中」和「悬停」可能同时落在不同列上，两档强度不同、各画各的
+                            hovered = day == hoveredDay,
+                            onHoverChange = { isHovered ->
+                                hoveredDay = if (isHovered) day
+                                else if (hoveredDay == day) null
+                                else hoveredDay
+                            },
                             titleSize = titleSize,
                             roomSize = roomSize,
                             titleLines = titleLines,
+                            selectedClassId = selectedClassId,
+                            // 单击：只高亮，不进编辑
+                            onSelectClass = { selectedClassId = it.id },
+                            // 双击：进编辑
                             onEdit = onEdit
                         )
                     }
@@ -2223,43 +2463,101 @@ private fun DayColumn(
     gridHeight: Dp,
     columnWidth: Dp,
     highlighted: Boolean,
+    /** 这一列是不是「今天」。今日与非今日的高亮走**两套颜色**：
+     *  今日是「时间事实」（主色 / 蓝），非今日是「用户选择」（中性灰）。
+     *  两者之前共用 primary，只靠 α 差一档，实际根本分不出来。 */
+    isToday: Boolean,
+    hovered: Boolean,
+    onHoverChange: (Boolean) -> Unit,
     titleSize: TextUnit,
     roomSize: TextUnit,
     titleLines: Int,
+    /** 当前选中的课程 id。单击产生，只高亮、不进编辑 */
+    selectedClassId: Int?,
+    onSelectClass: (ClassEntity) -> Unit,
     onEdit: (ClassEntity) -> Unit,
     modifier: Modifier = Modifier
 ) {
     // mapping 每次重组都是新对象，用 remember 反而每帧都要重算，直接算更省事（课程量很小）
     val placed = TimeAxis.layout(classes, mapping)
     val gridHeightPx = with(LocalDensity.current) { gridHeight.toPx() }
-    // 内容宽度 = 列宽 - 左右各 1dp 的padding，和原来 BoxWithConstraints 量出来的 maxWidth 一致
-    val contentWidth = (columnWidth - 2.dp).coerceAtLeast(0.dp)
+    // 内容宽度 = 整列宽。原来这里减 2dp 是因为外层有 `padding(horizontal = 1.dp)`，
+    // 那个内边距已经删掉了（它会让高亮底在列间露缝、形成断层），所以现在铺满
+    val contentWidth = columnWidth.coerceAtLeast(0.dp)
     // 高亮底色淡入淡出：点列头切换高亮时不是「啪」地铺上一层。
     // 透明度分浅色 / 深色两档 —— 同一个 α 在深背景上几乎看不见，在浅背景上又容易显脏
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val tintAlpha = if (isDark) 0.14f else 0.055f
+    // 今日走高对比的**主色**（蓝），非今日走**中性灰**（surfaceVariant 的深灰）。
+    // 灰色不能直接用 onSurface 调 α：那在深色下和背景只差 1.78:1，等于没铺。
+    // 深色下用一个明确的深灰（surfaceVariant 提一档亮度），浅色下用 surfaceVariant 压深
+    val selectTintColor = when {
+        isToday -> MaterialTheme.colorScheme.primary
+        isDark -> MaterialTheme.colorScheme.surfaceVariant
+        else -> MaterialTheme.colorScheme.outlineVariant
+    }
+    val tintAlpha = when {
+        isToday && isDark -> 0.34f
+        isToday -> 0.14f
+        // 灰底要更深才看得出「选中了」，因为它的色相不抢眼
+        isDark -> 0.85f
+        else -> 0.75f
+    }
     val tint by animateColorAsState(
-        targetValue = if (highlighted) MaterialTheme.colorScheme.primary.copy(alpha = tintAlpha)
+        targetValue = if (highlighted) selectTintColor.copy(alpha = tintAlpha)
         else Color.Transparent,
         animationSpec = tween(ENTER_MS),
         label = "dayHighlight"
     )
-    // 高亮列的左右边缘各描一条极细的主色线：光靠一层浅底色，列的边界在密集网格里读不出来
+    // 今日列的**常态弱底**：没被高亮时也铺一层很淡的主色，让「今天」始终有存在感。
+    // 与 `tint`（选中态）互斥 —— 选中时用 tint，未选中时才回落到这层。
+    // 这样「手动高亮了周四」时，周二（今天）仍然能一眼看出来
+    val todayBaseTint by animateColorAsState(
+        targetValue = if (isToday && !highlighted) {
+            MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.07f else 0.035f)
+        } else Color.Transparent,
+        animationSpec = tween(ENTER_MS),
+        label = "dayTodayBase"
+    )
+    // ── 悬停整列：比选中弱一档 ──
+    // 选中是「你点了它」，悬停只是「鼠标路过」。两者共用一层主色底，但悬停的 α 只有选中的
+    // 三分之一左右 —— 鼠标在网格里扫过时，整列的亮灭必须是「余光级」的，一旦和选中同强，
+    // 用户会分不清哪列是真的选上了。
+    val hoverTintAlpha = if (isDark) 0.05f else 0.022f
+    val hoverTint by animateColorAsState(
+        // 已经选中的列不再叠悬停色：同一列上叠两次只会让 α 失控，
+        // 而「选中」本来就比「悬停」强，够了
+        targetValue = if (hovered && !highlighted) {
+            MaterialTheme.colorScheme.primary.copy(alpha = hoverTintAlpha)
+        } else Color.Transparent,
+        animationSpec = tween(HOVER_MS),
+        label = "dayHover"
+    )
+    // 高亮列的左右边缘各描一条极细的线：光靠一层浅底色，列的边界在密集网格里读不出来。
+    // 颜色跟着 selectTintColor 走，今日是蓝边、非今日是灰边。
+    // **只画在列内**（第一条压左边缘、第二条压右边缘内缩 1dp），不向外溢出一像素 ——
+    // 向外画会在列间叠出双线、并在最左侧形成一根「多余竖条」。
+    // 非今日是灰底，要靠描边把边界「拎」出来，所以 α 比今日更高
     val edgeAlpha by animateFloatAsState(
         targetValue = if (highlighted) 1f else 0f,
         animationSpec = tween(ENTER_MS),
         label = "dayEdge"
     )
-    val edgeColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f * edgeAlpha)
+    val edgeBaseAlpha = if (isToday) 0.30f else 0.55f
+    val edgeColor = selectTintColor.copy(alpha = edgeBaseAlpha * edgeAlpha)
 
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .padding(horizontal = 1.dp)
             .drawBehind {
-                // 高亮的那一列铺一层主色。只铺到时间轴的真实高度，别盖住为展开预留的空白
+                // 今日的常态弱底画在最底层（非选中时才可见）
+                drawRect(color = todayBaseTint, size = Size(size.width, gridHeightPx))
+                // 悬停底铺在选中底下面：两者互斥（同一列不会同时画两层），顺序其实不影响结果，
+                // 但这样写保证「悬停 → 点选中」时，弱的那层先被盖住，过渡不会闪
+                drawRect(color = hoverTint, size = Size(size.width, gridHeightPx))
+                // 高亮的那一列铺一层底色。只铺到时间轴的真实高度，别盖住为展开预留的空白。
+                // **铺满整个宽度**（size.width 已经是含内边距的整列宽），不留缝
                 drawRect(color = tint, size = Size(size.width, gridHeightPx))
-                // 左右两条描边：只在有高亮时才画
+                // 左右两条描边：只在有高亮时才画。都压在列内，不外溢
                 if (edgeAlpha > 0.01f) {
                     val w = 1.dp.toPx()
                     drawRect(color = edgeColor, size = Size(w, gridHeightPx))
@@ -2301,11 +2599,16 @@ private fun DayColumn(
             ) {
                 GridCell(
                     cls = spot.cls,
+                    // 「这一格是不是今天」决定选中色条走蓝还是走灰 —— 与列的高亮色同源
+                    isToday = isToday,
+                    selected = spot.cls.id == selectedClassId,
                     showRoom = showRoom,
                     titleSize = (titleSize.value * blockFontScale).sp,
                     roomSize = (roomSize.value * blockFontScale).sp,
                     titleLines = blockTitleLines,
-                    onClick = onEdit
+                    onSelect = onSelectClass,
+                    onEdit = onEdit,
+                    onHoverChange = onHoverChange
                 )
             }
         }
@@ -2332,14 +2635,23 @@ private fun DayColumn(
 @Composable
 private fun GridCell(
     cls: ClassEntity,
+    /** 这一格是不是「今天」那一列的。决定**选中色条**走蓝还是走灰 */
+    isToday: Boolean,
+    /** 当前是否被选中（单击产生）。选中只做高亮，不进编辑 */
+    selected: Boolean,
     showRoom: Boolean,
     titleSize: TextUnit,
     roomSize: TextUnit,
     titleLines: Int,
-    onClick: (ClassEntity) -> Unit
+    /** 单击：只高亮，不进编辑 */
+    onSelect: (ClassEntity) -> Unit,
+    /** 双击：进编辑 */
+    onEdit: (ClassEntity) -> Unit,
+    onHoverChange: (Boolean) -> Unit
 ) {
-    // 临时提醒用暖黄底区分。它和「悬停 / 按下」是两层不同的信息（一个是分类，一个是交互），
-    // 所以悬停 / 按下用描边和抬起表达，不去动底色 —— 否则会和「临时」的黄色抢注意力
+    // 临时提醒用暖黄底区分。它和「悬停 / 按下 / 选中」是两层不同的信息（一个是分类，
+    // 一个是交互），所以交互层用描边、色条、抬起表达，**不去动底色** ——
+    // 否则会和「临时」的黄色抢注意力
     val isTemporary = cls.date.isNotEmpty()
     val baseContainer = if (isTemporary) MaterialTheme.colorScheme.secondaryContainer
     else MaterialTheme.colorScheme.surface
@@ -2351,61 +2663,175 @@ private fun GridCell(
     val pressed by interaction.collectIsPressedAsState()
     val active = maxOf(hover, if (pressed) 1f else 0f)
 
+    // ── 选中进度：0 → 1 一条，所有选中相关的属性由它 lerp ──
+    // 和列表卡片 / 便签行共用同一条曲线，三处的选中手感天然一致
+    val selection = rememberSelectionProgress(selected)
+
+    // 悬停状态往上报，让整列一起亮（桌面端的「整列高亮」）。
+    // 用 hovering 的**布尔原值**而不是动画中的 hover：上报的是「鼠标在不在」这个事实，
+    // 动画由列那边自己播 —— 否则每个块各报一个中间值，列会跟着抖。
+    // DisposableEffect 的 onDispose 保证块被移出组合（换周 / 滚动）时一定上报离开，
+    // 不然悬停色会永远留在那一列上。
+    val hovering by interaction.collectIsHoveredAsState()
+    DisposableEffect(hovering) {
+        onHoverChange(hovering)
+        onDispose { if (hovering) onHoverChange(false) }
+    }
+
+    // ── 选中色：今日 = 蓝（primary），非今日 = 灰 ──
+    // 与列表卡片（HighlightSpec.selectColor）用**同一套取色规则**：
+    // 灰不能用 onSurface 调 α —— 深色下 surface 与 onSurface 只差 1.78:1，等于没铺。
+    // 深色走 surfaceVariant、浅色走 outlineVariant，都是「比背景深一档」的中性色
+    val selectColor = when {
+        isToday -> scheme.primary
+        isDark -> scheme.surfaceVariant
+        else -> scheme.outlineVariant
+    }
+
     // 块底色的默认描边：一块「存在感很轻」的边界。相邻块之间只隔 5dp，
     // 而长期课的底色都是 surface，只靠底色差别分不出两块之间的分界 —— 这根线就是分界本身。
     // 深色下不能靠灰（surface 与 onSurface 只差 1.78:1），所以用一层淡主色
     val defaultOutline = if (isDark) scheme.primary.copy(alpha = 0.16f)
     else scheme.outline.copy(alpha = 0.40f)
-    // 悬停 / 按下时描边换成明显的主色。格子很小（宽 40~76dp），反馈必须「轻」——
-    // 一条细描边 + 一点点抬起就够，画粗了会糊成一团
+    // 悬停 / 按下 / 选中时描边换成明显的主色。格子很小（宽 40~76dp），反馈必须「轻」——
+    // 一条细描边 + 一点点抬起就够，画粗了会糊成一团。
+    // **终点用 selectColor**：选中态今日描蓝边、非今日描灰边，与左侧色条同色系
     val hoverOutline = scheme.primary.copy(alpha = if (isDark) 0.62f else 0.52f)
-    val outlineColor = lerpColor(defaultOutline, hoverOutline, active)
+    val hoverOrPressOutline = lerpColor(defaultOutline, hoverOutline, active)
+    val outlineColor = if (selection > 0.01f) {
+        lerpColor(hoverOrPressOutline, selectColor.copy(alpha = 0.80f), selection)
+    } else hoverOrPressOutline
+    val borderWidth = lerpDp(lerpDp(0.75.dp, 1.dp, active), 1.5.dp, selection)
 
-    // 左侧竖色条：给每节课一个可扫视的锚点。临时课用暖黄（和它的底色同族），
-    // 长期课用主色 —— 一眼扫过去就能分出「这周固定的课」和「临时加的课」
-    val accentBarColor = if (isTemporary) scheme.secondary else scheme.primary.copy(alpha = 0.55f)
+    // ── 左侧竖色条 ──
+    // 未选中：临时课用暖黄（和它的底色同族），长期课用主色 —— 一眼扫过去就能分出
+    // 「这周固定的课」和「临时加的课」
+    // 选中：统一换成 selectColor（今日=蓝 / 非今日=灰），并加粗 —— 与列表卡片同一套规则
+    val accentBarColor = if (isTemporary) {
+        lerpColor(scheme.secondary, selectColor, selection)
+    } else {
+        lerpColor(scheme.primary.copy(alpha = 0.55f), selectColor, selection)
+    }
+    // 选中色条加粗：2dp → 4dp（HL_BAR_WIDTH）。格子本身小，加到 4dp 已是上限，
+    // 再宽就会挤掉课程名的可用宽度
+    val accentBarWidth = lerpDp(2.dp, HL_BAR_WIDTH, selection)
+    // 选中光晕：向外扩一圈 selectColor。浅色主题下要更实才看得出来
+    val selectGlow = selectColor.copy(
+        alpha = (if (isDark) 0.30f else 0.17f) * selection
+    )
 
     val scale = 1f - 0.02f * (if (pressed) 1f else 0f) + 0.01f * hover
+        // 选中时也轻微放大：格子里只有 40~76dp，放大 5% 就是 2~4dp，够看出「它被挑中了」
+        + 0.05f * selection
     val elevation by animateDpAsState(
         targetValue = when {
             pressed -> 1.dp
+            selection > 0.5f -> 3.dp
             hover > 0.5f -> 2.dp
             else -> 1.dp
         },
         animationSpec = tween(HOVER_MS),
         label = "cellElevation"
     )
+    // 选中底色：一层很淡的 selectColor。**必须和左侧色条同时出现**，否则只加粗一根 4dp 的条
+    // 在密集网格里读不出来
+    val selectionTint by animateColorAsState(
+        targetValue = if (selected) {
+            selectColor.copy(alpha = if (isDark) 0.22f else 0.12f)
+        } else Color.Transparent,
+        animationSpec = tween(ENTER_MS),
+        label = "cellSelectionTint"
+    )
+    // 光晕的圆角半径得先换算成像素。`LocalDensity.current` 不能在 `drawBehind` 的
+    // DrawScope 里直接当 Composable 读（它在 lambda 里、不在组合作用域），必须先提出来
+    val glowCornerPx = with(LocalDensity.current) {
+        SHAPE_SMALL_RADIUS.toPx() + 3.dp.toPx()
+    }
 
     Card(
         modifier = Modifier
             .fillMaxSize()
             // 缩放要在最外层：graphicsLayer 只作用于它之后的节点，
-            // 挂在里面的话缩的只是文字、卡片底不动
+            // 挂在里面的话缩的只是文字、卡片底不动。
+            // clip = false：选中光晕画在卡片边界之外，裁剪了就看不到
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
+                clip = false
             }
+            // 选中光晕：在卡片底下先铺一圈向外扩的圆角矩形。
+            // 用 selectColor 而不是 shadow —— 阴影是灰的、跟主题无关，光晕取自主色/选中色，
+            // 浅色深色都能融入，且非今日会自动变灰
+            .drawBehind {
+                if (selectGlow.alpha > 0.01f) {
+                    val glowPx = 3.dp.toPx()
+                    drawRoundRect(
+                        color = selectGlow,
+                        topLeft = Offset(-glowPx, -glowPx),
+                        size = Size(size.width + glowPx * 2f, size.height + glowPx * 2f),
+                        cornerRadius = CornerRadius(glowCornerPx)
+                    )
+                }
+            }
+            .background(selectionTint, SHAPE_SMALL)
             .clickable(
                 interactionSource = interaction,
-                indication = LocalIndication.current
-            ) { onClick(cls) },
+                indication = LocalIndication.current,
+                // 单击 / 双击分离：同列表卡片 —— clickable 只负责悬停与按下的 interaction，
+                // onClick 留空，真正的分派交给下面的 pointerInput
+                onClick = {}
+            )
+            // 单击 → 高亮；双击 → 编辑。
+            // 必须用 detectTapGestures 而不是「clickable + 另一个 clickable」：
+            // 后者在双击时会先触发两次单击（高亮闪两下再进编辑），语义和手感都不对。
+            // detectTapGestures 自带双击判定窗口，单击回调会**等一个双击超时**后确认，
+            // 带来约 300ms 的反馈延迟 —— 这是双击语义的固有代价，无法两全
+            .pointerInput(cls.id) {
+                detectTapGestures(
+                    onTap = { onSelect(cls) },
+                    onDoubleTap = { onEdit(cls) },
+                    onPress = {
+                        // **第一次点下就强制高亮**（不管是准备单击还是双击）。
+                        // 理由：onTap 要等双击判定窗口关闭（约 300ms）才回调，
+                        // 那段时间里块是「没反应」的 —— 手感很木。
+                        // 放在 onPress 里，手指按下的当帧就亮起来，单击/双击共用这一次高亮。
+                        // onSelect 必须幂等（它只写 selectedClassId），
+                        // 所以这里先亮、之后 onTap 再亮一次也不会有副作用。
+                        onSelect(cls)
+                        // 把按下转发给 clickable 的 interaction，按下缩小 / 描边反馈保持原样。
+                        // 只转发不消费，双击仍能被识别
+                        val press = PressInteraction.Press(it)
+                        interaction.emit(press)
+                        tryAwaitRelease()
+                        interaction.emit(PressInteraction.Release(press))
+                    }
+                )
+            },
         shape = SHAPE_SMALL,
         elevation = CardDefaults.cardElevation(defaultElevation = elevation),
         colors = CardDefaults.cardColors(containerColor = baseContainer),
-        // 描边始终存在（默认极淡、悬停转主色）。宽度与颜色都跟着 active 过渡，不会「跳一下」
-        border = BorderStroke(
-            width = lerpDp(0.75.dp, 1.dp, active),
-            color = outlineColor
-        )
+        // 描边始终存在（默认极淡、悬停转主色、选中转 selectColor）。
+        // 宽度与颜色都跟着进度过渡，不会「跳一下」
+        border = BorderStroke(width = borderWidth, color = outlineColor)
     ) {
         // 左侧一根竖色条：课程块之间的区分不能只靠文字。它和列表卡片的竖条同源，
-        // 但更窄（块本身就小），只是给每节课一个「有边界」的锚点
+        // 未选中时更窄（块本身就小），选中时加粗到 4dp 并把光晕交给卡片层
         Row(modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
-                    .width(2.dp)
+                    .width(accentBarWidth)
                     .fillMaxHeight()
-                    .background(accentBarColor)
+                    .background(
+                        // 选中时走纵向渐变（顶实底淡），和列表卡片的色条一致，有光感
+                        if (selection > 0.01f) {
+                            Brush.verticalGradient(
+                                listOf(
+                                    accentBarColor,
+                                    accentBarColor.copy(alpha = accentBarColor.alpha * 0.48f)
+                                )
+                            )
+                        } else Brush.verticalGradient(listOf(accentBarColor, accentBarColor))
+                    )
             )
             Column(
                 modifier = Modifier
@@ -2851,12 +3277,12 @@ fun WeekDayList(
                                     selected = selectedId == cls.id,
                                     // 正在上课的只可能有一节，用 id 比对；下课时间一到它会自己熄掉
                                     ongoing = cls.id == ongoingId,
-                                    // 单击先只做高亮，不直接进编辑 —— 和便签列表一致，
-                                    // 避免误触就把课程改了。要编辑再点一次已经选中的那张
-                                    onClick = {
-                                        if (selectedId == cls.id) onEdit(cls)
-                                        else selectedId = cls.id
-                                    }
+                                    // 单击：只做高亮，**不进编辑** —— 浏览多家课程时鼠标划一下就改课，
+                                    // 是不可接受的。已经是选中态了就保持（不取消、不编辑）
+                                    onSelect = { selectedId = cls.id },
+                                    // 双击：才进编辑。这是唯一入口，代价是「要改必须双击」，
+                                    // 但换来的是「随便点绝不会误改」
+                                    onEdit = { onEdit(cls) }
                                 )
                             }
                             if (dayClasses.isEmpty()) {
@@ -2904,7 +3330,10 @@ fun WeekClassCard(
     selected: Boolean = false,
     /** 是否正在上课（时间维度上的「现在」）。用蓝色光晕 + 竖条呼吸表达，和「选中」区分开 */
     ongoing: Boolean = false,
-    onClick: () -> Unit
+    /** 单击：只高亮，不进编辑 */
+    onSelect: () -> Unit,
+    /** 双击：进编辑 */
+    onEdit: () -> Unit
 ) {
     val interaction = remember { MutableInteractionSource() }
     val selection = rememberSelectionProgress(selected)
@@ -2929,6 +3358,8 @@ fun WeekClassCard(
         // 今天那一列是「弱高亮」：只给竖条 + 略深的描边，不给光晕 ——
         // 否则本周视图里一屏会有好几张发光的卡片，重点就散了
         accent = if (isToday) 1f else 0f,
+        // 选中色条走蓝还是走灰，由「这一项是不是今天」决定
+        isToday = isToday,
         pressed = pressed,
         hovering = hover > 0.5f
     )
@@ -2982,8 +3413,35 @@ fun WeekClassCard(
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
-                onClick = onClick
-            ),
+                // 单击 / 双击分离：这里把「点击」的最终判定交给下面手势层，
+                // clickable 只负责悬停与按下的 interaction（外观反馈仍走它），
+                // onClick 留空 —— 真正的高亮 / 编辑在 pointerInput 里分派
+                onClick = {}
+            )
+            // 单击 → 高亮；双击 → 编辑。
+            // 必须用 detectTapGestures 而不是两个 clickable 叠加：
+            // 后者会在双击时先触发两次单击（高亮闪两下再进编辑），语义和手感都不对。
+            // detectTapGestures 自带双击判定窗口，onTap 要等窗口关闭才回调 ——
+            // 所以高亮**提前到 onPress**（见下），不等 onTap。
+            .pointerInput(cls.id) {
+                detectTapGestures(
+                    onTap = { onSelect() },
+                    onDoubleTap = { onEdit() },
+                    onPress = {
+                        // **第一次点下就强制高亮**（不管是准备单击还是双击）。
+                        // onTap 要等双击判定窗口关闭（约 300ms）才回调，那段时间块是「没反应」的；
+                        // 放在 onPress 里，按下的当帧就亮。onSelect 幂等（只写 selectedId），
+                        // 之后 onTap 再亮一次也无副作用
+                        onSelect()
+                        // 让 clickable 的 interaction 感知到按下，按下缩小 / 描边反馈保持原样。
+                        // 这里只做「转发」，不消费事件，双击仍能被上面识别
+                        val press = PressInteraction.Press(it)
+                        interaction.emit(press)
+                        tryAwaitRelease()
+                        interaction.emit(PressInteraction.Release(press))
+                    }
+                )
+            },
         shape = SHAPE_CARD,
         colors = CardDefaults.cardColors(containerColor = spec.containerColor),
         elevation = CardDefaults.cardElevation(defaultElevation = elevation),

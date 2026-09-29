@@ -389,4 +389,76 @@ class TimeAxisTest {
         assertEquals(marks.sorted(), marks)
         assertEquals(marks.distinct(), marks)
     }
+
+    @Test
+    fun zebraBandsAlternateEveryOtherHour() {
+        val span = TimeAxis.Span(8 * 60, 12 * 60)
+        val bands = TimeAxis.zebraBands(span)
+
+        // 起点在 08:00 → 带落在 08-09、10-11；09-10、11-12 留白
+        assertEquals(2, bands.size)
+        assertEquals(8 * 60, bands[0].startMinute)
+        assertEquals(9 * 60, bands[0].endMinute)
+        assertEquals(10 * 60, bands[1].startMinute)
+        assertEquals(11 * 60, bands[1].endMinute)
+    }
+
+    @Test
+    fun zebraBandsClipToSpan() {
+        // span 从 08:30 开始、11:30 结束。第一条带从起点所在小时起算，
+        // 所以是 08-09（被起点裁掉前半）、10-11（被终点裁掉后半）
+        val span = TimeAxis.Span(8 * 60 + 30, 11 * 60 + 30)
+        val bands = TimeAxis.zebraBands(span)
+
+        assertEquals(2, bands.size)
+        assertEquals(span.startMinute, bands[0].startMinute)
+        assertEquals(9 * 60, bands[0].endMinute)
+        assertEquals(10 * 60, bands[1].startMinute)
+        assertEquals(11 * 60, bands[1].endMinute)
+    }
+
+    @Test
+    fun zebraBandsStayWithinSpan() {
+        val span = TimeAxis.Span(7 * 60 + 43, 21 * 60 + 10)
+        val bands = TimeAxis.zebraBands(span)
+
+        assertTrue(bands.all { it.startMinute >= span.startMinute })
+        assertTrue(bands.all { it.endMinute <= span.endMinute })
+        assertTrue(bands.all { it.endMinute > it.startMinute })
+    }
+
+    @Test
+    fun zebraBandsAreAscendingAndDisjoint() {
+        val span = TimeAxis.Span(6 * 60, 22 * 60)
+        val bands = TimeAxis.zebraBands(span)
+
+        // 升序，且相邻两段之间至少隔 1 小时（斑马纹「隔一条空一条」）
+        for (i in 1 until bands.size) {
+            assertTrue(bands[i].startMinute > bands[i - 1].endMinute)
+        }
+    }
+
+    @Test
+    fun zebraBandsHandlesShortSpan() {
+        // 半小时的跨度，起点在 09:10。相位锚定起点，所以第一小时（09-10）就是带，
+        // 整段被裁成 [09:10, 09:40)。若按绝对偶数小时取，这里会整段落进留白、一条带都没有
+        val span = TimeAxis.Span(9 * 60 + 10, 9 * 60 + 40)
+        val bands = TimeAxis.zebraBands(span)
+
+        assertEquals(1, bands.size)
+        assertEquals(span.startMinute, bands[0].startMinute)
+        assertEquals(span.endMinute, bands[0].endMinute)
+    }
+
+    @Test
+    fun zebraBandsAlwaysStartAtSpanStartHour() {
+        // 相位锚定起点的核心保证：第一段带的起点永远等于 span 起点所在的那一小时
+        // （即 band.start == span.start，因为起点就在这一小时内）。
+        // 换几种起点小时（奇数 / 偶数）都成立
+        listOf(7, 8, 9, 10, 23).forEach { hour ->
+            val span = TimeAxis.Span(hour * 60 + 43, hour * 60 + 43 + 90)
+            val bands = TimeAxis.zebraBands(span)
+            assertEquals("hour=$hour", span.startMinute, bands.first().startMinute)
+        }
+    }
 }

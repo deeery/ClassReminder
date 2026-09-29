@@ -50,6 +50,84 @@ MainActivity (单 Activity)
 
 ## 更新日志
 
+### v3.20 — 表格课程块的「单击高亮 / 双击编辑」与色条分流
+
+改的是**表格界面**（`WeekGrid` 里的 `GridCell`）。
+
+**1. 单击不再直接进编辑**
+
+原来 `GridCell` 只有一个 `onClick`，点一下等于「点开编辑」——想单纯选中看一下都没机会。现在手势拆成两路：
+
+```kotlin
+onSelect: (ClassEntity) -> Unit, onEdit: (ClassEntity) -> Unit
+```
+
+`clickable(onClick = {})` 只吃掉点击语义（保证无障碍焦点与水波纹），真正的判定交给 `pointerInput(cls.id) { detectTapGestures(...) }`：`onTap` → `onSelect()`，`onDoubleTap` → `onEdit()`，`onPress` 手动 `emit(PressInteraction.Press)` / `Release` 让按下态动画照常。单击与双击由 Compose 内置的双击窗口区分，不需要自己攒计时器。
+
+**高亮提前到 `onPress`（第一次点下就亮）**
+
+`onTap` 要等双击判定窗口关闭（约 300ms）才回调，那段时间里块是「没反应」的 —— 手感很木。所以把 `onSelect()` 也放进 `onPress`：**手指按下的当帧就高亮，单击和双击共用这一次高亮**。因为 `onSelect` 是幂等的（只写 `selectedClassId`），之后 `onTap` 再亮一次也没有副作用。
+
+**2. 色条按「是否今天」分流**
+
+`GridCell` 新增 `isToday` 与 `selected` 两个参数，并引入 `selectColor`：
+
+- **今日**（`isToday == true`）→ `primary`，蓝
+- **非今日**（深色主题）→ `surfaceVariant`；（浅色主题）→ `outlineVariant`，灰
+
+左侧竖色条选中时从 2dp 加粗到 `HL_BAR_WIDTH`（4dp）并转成纵向渐变；临时课的暖黄条也在选中时让位给蓝/灰。描边、光晕、底色全部跟着 `selectColor` 走 —— 非今日选中**不再染蓝**。
+
+**3. 选中态的四层表达**
+
+| 层 | 未选中 | 选中（今日 / 非今日） |
+|---|---|---|
+| 左侧色条 | 2dp，主色 α0.55（临时课=暖黄） | 4dp，蓝 / 灰 + 纵向渐变 |
+| 卡片描边 | `0.75dp`，outline α0.40 | `1.5dp`，selectColor α0.80 |
+| 卡片底色 | `surface`（临时课 = `secondaryContainer`） | selectColor α0.12（浅）/ 0.22（深） |
+| 光晕 | 无 | 向外 3dp，α0.17（浅）/ 0.30（深） |
+
+另加 `scale = 1.05` 的原地放大（用 `graphicsLayer`，不参与布局、不挤开邻居）。**光晕用 `selectColor` 而不是 `shadow`** —— 阴影是灰的、跟主题无关，光晕取自主色/选中色才能深浅主题都融入，且非今日自动变灰。
+
+**4. 一致性与取舍**
+
+- 单击**已选中**的块：保持选中，不 toggle 掉（浏览时手抖不会丢焦点）
+- 双击必然先触发一次单击，因此 `onSelect` 必须是**幂等**的——它只设 `selectedClassId`，无副作用
+- 点网格空白处取消选中：在网格底层挂一个 `detectTapGestures`，它用 `awaitFirstDown(requireUnconsumed = true)`，课程块已消费的 down 不会再传过来，所以**只会接住「落在底纹/列间空白上」的点击**
+- 键盘暂不处理（用户决策），`clickable` 已保留 Enter/Space 的语义通道
+- **高亮零延迟**：第一次按下的当帧就高亮（走 `onPress`），不等双击窗口。
+  代价是「双击时高亮会先亮一次」——但这本来就是同一个块的选中态，
+  `onSelect` 幂等，视觉上无跳变
+
+**5. 新增常量**
+
+`SHAPE_SMALL_RADIUS = 8.dp`（供光晕的 `CornerRadius` 复用，避免 `SHAPE_SMALL` 的圆角值写两遍）。
+
+compileDebugKotlin 成功，单测 57 个全绿（38 + 9 + 5 + 5）。按用户要求未构建 APK。
+
+### v3.19 — 表头与列身之间的横向断层
+
+v3.18 把高亮列「填满」了，但只修了**列方向**，漏了**行方向**：表头 `Row` 上挂着 `.padding(bottom = 6.dp)`，这 6dp 是透明的、没有底色。于是高亮列在「表头底 / 列身顶」之间被一条**透明横带**切成上深下浅两截，和「今日」栏等高位置的颜色对不上。
+
+修法是把间距从 `Row` 挪进格子**内部**：表头格子改固定高度 `GRID_HEADER_HEIGHT`，间距写成 `.padding(top = 6.dp, bottom = HEADER_GAP)`。由于 `background` 在 `padding` 之前调用，底色仍然铺满整个格子，横带消失。
+
+### v3.18 — 高亮列的填充、配色与多余竖条
+
+对着截图修三处：
+
+1. **填不满、有黑色断层**：`DayColumn` 原来每列带 `padding(horizontal = 1.dp)`，高亮底色铺不到边 → 列间露出背景。删掉该 padding，`contentWidth = columnWidth.coerceAtLeast(0.dp)`，列与列严丝合缝。
+2. **今日 / 非今日无法区分**：原来共用主色、只差透明度。新增 `selectTintColor`：今日 = `primary`；非今日深色 = `surfaceVariant`、浅色 = `outlineVariant`。`tintAlpha` 分别为 今日深 0.34 / 今日浅 0.14 / 非今日深 0.85 / 非今日浅 0.75，并给今日常态补一层弱底 `todayBaseTint`（深 0.07 / 浅 0.035）。
+3. **左侧多出一根竖条**：去掉独立竖条绘制，高亮只出现在各日期列内部。
+
+### v3.17 — 表格视觉优化（斑马纹 / 悬停整列 / 表头分隔）
+
+**1. 斑马纹时间带**：新增 `TimeAxis.zebraBands(span, minuteOfDay)`，相邻小时交替着色（α `ZEBRA_ALPHA = 0.03`）。
+
+> 这里踩过一个真坑：第一版按**绝对偶数小时**取带，span 起点落在奇数小时（如 07:43）时，短跨度会整段落进留白、返回空列表。单测把它抓出来了（`zebraBandsHandlesShortSpan`）。改成**相位锚定 span 起点所在小时**后正常，补 `zebraBandsAlwaysStartAtSpanStartHour` 固化该行为。
+
+**2. 悬停整列轻高亮**：`hoveredDay` 状态提升到 `WeekGrid`，悬停时表头一起亮。
+**3. 表头分隔线**：`headerDivider`（`outline` α0.45）；表头圆角只保留最外侧（首列 `topStart`、末列 `topEnd`），中间 0dp，连成一条。
+**4. 响应式降级**：`BoxWithConstraints` + `COMPACT_BREAKPOINT = 360.dp` / `COMPACT_SCALE = 0.92f`，窄屏时间栏 48→30dp、今日列放大 ×1.35→×1.15、字号同步缩放。
+
 ### v3.16 — 周课表的可读性
 
 v3.15 把高亮语言统一之后，**表格**（`WeekGrid`）反而成了最不好读的一屏：密、平、块与块糊在一起，时间刻度还会跳。

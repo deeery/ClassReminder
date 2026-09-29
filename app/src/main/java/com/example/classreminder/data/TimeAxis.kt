@@ -134,6 +134,37 @@ object TimeAxis {
     }
 
     /**
+     * 「斑马纹」时间带：每隔一小时交替的横向色带，返回**要铺底**的那些时段。
+     *
+     * 网格是按时间轴定位的，没有网页表格那种行；但时间本身就是行，一小时一行。
+     * 按奇偶小时交替铺一层极淡的底，眼睛扫行时有了参照物，不用每次回到左边读刻度。
+     *
+     * **相位锚定在 span 起点所在的那一小时**，而不是绝对偶数小时。原因：span 起点由本周
+     * 最早的课决定，常落在奇数小时（比如 07:43 → 第 7 小时）。若按绝对偶数小时取，
+     * 短跨度（如 09:10–09:40）可能整段都落进「留白」，网格一条带都没有、底纹参照全丢。
+     * 锚定起点后，**第一小时永远有带**，斑马纹在任何跨度下都成立。
+     *
+     * 返回的每段都是 `[start, end)`，落在 [span] 内，升序，且相邻两段至少隔一小时。
+     * [minuteOfDay] 是时段基准（默认 0 点），保留给「跨天」场景。
+     */
+    fun zebraBands(span: Span, minuteOfDay: Int = 0): List<Focus> {
+        // 起点所在的那一小时，作为第一条带；之后每隔一小时一条
+        val hourOfStart = ((span.startMinute - minuteOfDay).coerceAtLeast(0)) / 60
+        val bands = mutableListOf<Focus>()
+        // 上限兜底：span 最多 24 小时，最多 12 条带，循环不会失控
+        while (bands.size < 24) {
+            val bandStart = minuteOfDay + (hourOfStart + bands.size * 2) * 60
+            if (bandStart >= span.endMinute) break
+            val bandEnd = bandStart + 60
+            // 与 span 求交，只保留真正可见的部分
+            val from = maxOf(bandStart, span.startMinute)
+            val to = minOf(bandEnd, span.endMinute)
+            if (to > from) bands += Focus(from, to)
+        }
+        return bands
+    }
+
+    /**
      * 没有任何一列被高亮时，纵轴该标哪些时刻。
      *
      * 返回 [span] 范围内、对齐到 [stepMinutes] 整数倍的「整点」时刻。之所以要单独抽出来并
