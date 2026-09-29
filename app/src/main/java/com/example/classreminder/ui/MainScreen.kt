@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -108,6 +109,7 @@ import com.example.classreminder.data.TimeAxis
 import com.example.classreminder.data.TodaySchedule
 import com.example.classreminder.data.WeekSchedule
 import com.example.classreminder.Prefs
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -118,11 +120,13 @@ private val dayLabel = mapOf(
 )
 
 // ── 统一的圆角/描边，避免每个组件各写各的 ─────────────────────────
+// 这几个是跨文件共享的（TodayScreen.kt 也用同一套），所以是 internal 而不是 private ——
+// Kotlin 的 `private` 在文件作用域是「本文件可见」，别的文件拿不到。
 /** 卡片圆角半径。单独抽成 Dp 是因为自绘描边要拿它当 `CornerRadius` 用 */
-private val SHAPE_CARD_RADIUS = 14.dp
-private val SHAPE_CARD = RoundedCornerShape(SHAPE_CARD_RADIUS)
-private val SHAPE_SMALL_RADIUS = 8.dp
-private val SHAPE_SMALL = RoundedCornerShape(SHAPE_SMALL_RADIUS)
+internal val SHAPE_CARD_RADIUS = 14.dp
+internal val SHAPE_CARD = RoundedCornerShape(SHAPE_CARD_RADIUS)
+internal val SHAPE_SMALL_RADIUS = 8.dp
+internal val SHAPE_SMALL = RoundedCornerShape(SHAPE_SMALL_RADIUS)
 private val SHAPE_CHIP = RoundedCornerShape(50)
 
 /** 课表列表卡片：竖条占位宽度 */
@@ -139,8 +143,8 @@ private fun cardBorder() = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfac
 // 全应用的过渡时长都收在这里，风格才一致：入场稍慢、出场更快（避免两层长时间同时可见）。
 // tween 的默认缓动就是 FastOutSlowInEasing，所以这里不再逐个指定。
 
-/** 入场时长：淡入 / 展开 / 位移 */
-private const val ENTER_MS = 240
+/** 入场时长：淡入 / 展开 / 位移。跨文件共享，见上方 SHAPE_CARD 的说明 */
+internal const val ENTER_MS = 240
 
 /** 出场时长：比入场快一档 */
 private const val EXIT_MS = 160
@@ -556,11 +560,24 @@ fun MainScreen(
     var editingNote by remember { mutableStateOf<NoteEntity?>(null) }
     var addingNote by remember { mutableStateOf(false) }
     var selectedNoteId by remember { mutableStateOf<Int?>(null) }
+    // 课表页里被单击选中的课程块。**提升到这里**（原来在 WeekGrid 内部）是为了让右下角的
+    // FAB 也能读到它 —— 选中课程时详情条会从底部浮出来，FAB 必须同步上移，否则两者会重叠。
+    var selectedClassId by remember { mutableStateOf<Int?>(null) }
     var fabExpanded by remember { mutableStateOf(false) }
     var isSearchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
-    // 0=便签, 1=课表, 2=设置；启动时接着上次停留的非设置页
+    // 0=今天, 1=课表, 2=便签, 3=设置；启动时接着上次停留的非设置页
     var selectedTab by remember { mutableStateOf(Prefs.getLastTab(ctx)) }
+    // 「今天」页的日期副标题要跟着走字，所以这里也留一个每 30 秒刷新一次的「现在」。
+    // 和 TodayScreen 内部那份是分开的：顶栏属于 Scaffold，没法读 TodayScreen 的局部状态。
+    var clockNow by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(selectedTab) {
+        // 只在今天页走时钟，别的页不需要每 30 秒重组一次顶栏
+        while (selectedTab == 0) {
+            delay(30_000L)
+            clockNow = System.currentTimeMillis()
+        }
+    }
     // 课表的显示模式：既要在切 Tab 时不丢，也要在下次打开时沿用
     var weekMode by remember { mutableStateOf(if (Prefs.isWeekGrid(ctx)) WeekMode.GRID else WeekMode.LIST) }
     // 实验性：时间轴网格课表。关掉后课表换成 v2.0 那版「按天分组、可折叠」的列表渲染。
@@ -592,13 +609,38 @@ fun MainScreen(
 
     Scaffold(
         topBar = {
-            // 顶栏只在便签页存在。这里**故意不给它做高度动画** ——
+            // 顶栏在「今天」和「便签」两页存在。这里**故意不给它做高度动画** ——
             // Scaffold 的 contentPadding.top 直接取顶栏的测量高度（见 Scaffold.kt：
             // `if (topBarPlaceables.isEmpty()) insets.calculateTopPadding() else topBarHeight`），
             // 高度一动，整屏每帧都要换一套约束：课表网格每帧重组、每个课程块每帧重新排版
             // （文字布局缓存的 key 里带 constraints，高度变了就不复用），切页帧率就是这么掉的。
             // 改成随内容一起切换，代价只是没有折叠动画。
             if (selectedTab == 0) {
+                // ── 今天页：大标题 + 日期副标题 ──
+                // 副标题承载「9 月 29 日 周二 · 第 5 周」这类信息，
+                // 顶栏有一行小字，正文就不用再重复一遍日期。
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .statusBarsPadding()
+                        .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 10.dp)
+                ) {
+                    Text(
+                        text = "今天",
+                        fontSize = 26.sp,
+                        lineHeight = 32.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = todaySubtitle(currentWeek, clockNow),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else if (selectedTab == 2) {
                 TopAppBar(
                     title = {
                         // 标题 ↔ 搜索框：淡入淡出 + 从左侧轻微放大，锚点放在左端
@@ -684,6 +726,9 @@ fun MainScreen(
                     selectedTab = tab
                     // 离开课表页就把展开的添加菜单收起来，免得切回来还敞着
                     if (tab != 1) fabExpanded = false
+                    // 离开课表页也清掉网格选中：详情条和 FAB 的上移都跟着它，
+                    // 留着会让下次回到课表页时看到一个「凭空的」选中态
+                    if (tab != 1) selectedClassId = null
                     // 只记非设置页（守卫在 Prefs 里）
                     Prefs.setLastTab(ctx, tab)
                 }
@@ -692,13 +737,21 @@ fun MainScreen(
         floatingActionButton = {
             // 设置页没有悬浮按钮。切 Tab 时它瞬时出现 / 消失，不做缩放淡入 ——
             // 和页面一样，切页那一帧已经很挤了，再叠过渡只会更卡。
-            if (selectedTab != 2) {
+            if (selectedTab != 3) {
                 // 加号是点得最多的按钮，按下反馈单独给它一份 interactionSource
                 val fabInteraction = remember { MutableInteractionSource() }
                 val fabScale = rememberPressScale(fabInteraction, pressedScale = 0.94f)
+                // 课表页选中了课程块时，底部会浮出详情条 —— FAB 同步上移，否则两者重叠。
+                // 用 animateDpAsState 而不是硬切：详情条本身是展开动画进来的，
+                // FAB 跟着一起平移，两者看起来是同一件事的两个部分。
+                val detailLift by animateDpAsState(
+                    targetValue = if (selectedTab == 1 && selectedClassId != null) DETAIL_BAR_LIFT else 0.dp,
+                    animationSpec = tween(ENTER_MS),
+                    label = "fabDetailLift"
+                )
                 Column(horizontalAlignment = Alignment.End) {
-                    // ── 加号正上方那个按钮：便签页是「回撤」，课表页是「查看 / 编辑」切换，占同一个槽位 ──
-                    if (selectedTab == 0) {
+                    // ── 加号正上方那个槽位：便签页放「回撤」，课表页让给展开菜单，今天页空着 ──
+                    if (selectedTab == 2) {
                         // 回撤只在真的有可撤销的操作时出现
                         AnimatedVisibility(visible = canUndo) {
                             Column(horizontalAlignment = Alignment.End) {
@@ -734,13 +787,22 @@ fun MainScreen(
                     }
                     FloatingActionButton(
                         onClick = {
-                            // 便签页 = 添加项目；课表页 = 展开 / 收起添加菜单
-                            if (selectedTab == 0) addingNote = true else fabExpanded = !fabExpanded
+                            // 便签页 = 添加便签；课表页 = 展开 / 收起添加菜单；
+                            // 今天页 = 直接进「添加课程 / 提醒」对话框（这页没有可展开的二级项）
+                            when (selectedTab) {
+                                1 -> fabExpanded = !fabExpanded
+                                2 -> addingNote = true
+                                else -> addingKind = AddKind.LONG_TERM
+                            }
                         },
-                        modifier = Modifier.graphicsLayer {
-                            scaleX = fabScale
-                            scaleY = fabScale
-                        },
+                        modifier = Modifier
+                            // padding 而不是 offset：padding 会真的把按钮「推上去」，
+                            // 同时让 Scaffold 的 FAB 槽位跟着变高，不会和底栏抢位置
+                            .padding(bottom = detailLift)
+                            .graphicsLayer {
+                                scaleX = fabScale
+                                scaleY = fabScale
+                            },
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary,
                         interactionSource = fabInteraction
@@ -759,8 +821,9 @@ fun MainScreen(
                                 if (open) Icons.Default.Close else Icons.Default.Add,
                                 contentDescription = when {
                                     open -> "收起添加菜单"
-                                    selectedTab == 0 -> "添加项目"
-                                    else -> "添加"
+                                    selectedTab == 2 -> "添加便签"
+                                    selectedTab == 1 -> "添加提醒"
+                                    else -> "添加课程"
                                 }
                             )
                         }
@@ -771,10 +834,40 @@ fun MainScreen(
     ) { padding ->
         // 用 Box 而不是 Column：左下角操作区要浮在内容之上，得靠 align 定位
         Box(modifier = Modifier.padding(padding).fillMaxSize()) {
-            // 三个页面之间**瞬时切换**，不做过渡动画：
+            // 四个页面之间**瞬时切换**，不做过渡动画：
             // 切页本身就要组合出新的一屏（课表那屏很重），再叠加过渡只会让这一帧更挤。
             when (selectedTab) {
-                0 -> NoteListView(
+                0 -> TodayScreen(
+                    classes = classes,
+                    notes = notes,
+                    currentWeek = currentWeek,
+                    onOpenClass = { editing = it },
+                    onOpenNotes = {
+                        selectedTab = 2
+                        Prefs.setLastTab(ctx, 2)
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+                1 -> WeekView(
+                    classes = classes,
+                    currentWeek = currentWeek,
+                    week1Monday = week1Monday,
+                    mode = weekMode,
+                    onModeChange = {
+                        weekMode = it
+                        Prefs.setWeekGrid(ctx, it == WeekMode.GRID)
+                        // 切到列表模式时清掉网格的选中：列表有自己的选中逻辑，
+                        // 而 FAB 的上移只看网格选中，留着会让 FAB 莫名抬在半空
+                        if (it != WeekMode.GRID) selectedClassId = null
+                    },
+                    shownWeek = shownWeek,
+                    onShownWeekChange = { shownWeek = it },
+                    onCalibrate = { showCalibrate = true },
+                    onEdit = { editing = it },
+                    selectedClassId = selectedClassId,
+                    onSelectClassId = { selectedClassId = it }
+                )
+                2 -> NoteListView(
                     notes = filteredNotes,
                     searching = searchQuery.isNotBlank(),
                     selectedId = selectedNote?.id,
@@ -791,20 +884,6 @@ fun MainScreen(
                     onMove = { from, to -> viewModel.moveNote(from, to) },
                     onAdd = { addingNote = true }
                 )
-                1 -> WeekView(
-                    classes = classes,
-                    currentWeek = currentWeek,
-                    week1Monday = week1Monday,
-                    mode = weekMode,
-                    onModeChange = {
-                        weekMode = it
-                        Prefs.setWeekGrid(ctx, it == WeekMode.GRID)
-                    },
-                    shownWeek = shownWeek,
-                    onShownWeekChange = { shownWeek = it },
-                    onCalibrate = { showCalibrate = true },
-                    onEdit = { editing = it }
-                )
                 else -> SettingsPage(
                     themeMode = themeMode,
                     onThemeModeChanged = onThemeModeChanged,
@@ -817,7 +896,7 @@ fun MainScreen(
             // 选中便签时，左下角浮出「编辑 / 删除」，尺寸和右下角的按钮一致。
             // 用 AnimatedContent 以「选中的那条便签」为目标：退场动画期间它仍拿得到那一条，不会读到 null
             AnimatedContent(
-                targetState = if (selectedTab == 0) selectedNote else null,
+                targetState = if (selectedTab == 2) selectedNote else null,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .padding(start = 16.dp, bottom = 16.dp),
@@ -1067,8 +1146,9 @@ fun BottomNavigationBar(
     onTabSelected: (Int) -> Unit
 ) {
     val items = listOf(
-        BottomNavItem("便签", Icons.Default.Edit),
+        BottomNavItem("今天", Icons.Default.Home),
         BottomNavItem("课表", Icons.Default.DateRange),
+        BottomNavItem("便签", Icons.Default.Edit),
         BottomNavItem("设置", Icons.Default.Settings)
     )
     // 运行中 ↔ 未启动之间切换时颜色做过渡，不是硬切。
@@ -1082,11 +1162,13 @@ fun BottomNavigationBar(
 
     Column {
         // ── 状态指示行 ──
-        Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+        // 服务状态是「系统级」信息，不参与导航。用一条 outlineVariant 细线和导航区分开，
+        // 底色比导航栏浅一档（surfaceVariant 半透明），让它看起来是「附属在上面」而不是同级
+        Divider(color = MaterialTheme.colorScheme.outlineVariant)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
                 .padding(horizontal = 16.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -1102,23 +1184,29 @@ fun BottomNavigationBar(
                     currentWeek?.let { append(" · 第 $it 周") }
                 },
                 fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         // ── 导航项 ──
-        NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+        // containerColor 用 surface（而不是默认的 surfaceContainer）：本项目整体是「白底 + 极淡描边」
+        // 的 Google 扁平风，导航栏再抬一层灰会显得脏。分隔靠上面那条细线
+        NavigationBar(
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp
+        ) {
             items.forEachIndexed { index, item ->
                 NavigationBarItem(
                     selected = selectedTab == index,
                     onClick = { onTabSelected(index) },
                     icon = { Icon(item.icon, contentDescription = item.label) },
-                    label = { Text(item.label) },
+                    label = { Text(item.label, fontSize = 11.sp) },
+                    // M3 的选中指示器是 primaryContainer 胶囊 + primary 图标/文字
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
                         selectedTextColor = MaterialTheme.colorScheme.primary,
                         indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        unselectedTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 )
             }
@@ -1760,8 +1848,9 @@ private fun TodayHeaderBadge() {
     }
 }
 
-/** 临时提醒的黄色角标，跟在课程名称右边。表格视图用底色区分，这里是列表视图的标识 */@Composable
-private fun TemporaryBadge() {
+/** 临时提醒的黄色角标，跟在课程名称右边。表格视图用底色区分，这里是列表视图的标识 */
+@Composable
+internal fun TemporaryBadge() {
     Box(
         modifier = Modifier
             .background(MaterialTheme.colorScheme.secondary, SHAPE_CHIP)
@@ -1860,6 +1949,17 @@ private fun WeekModeSwitch(mode: WeekMode, onChange: (WeekMode) -> Unit) {
 /** 底部给右下角的加号按钮留出的高度，免得最后一行钻到它底下 */
 private val FAB_RESERVE = 88.dp
 
+/**
+ * 选中课程后从底部浮出的详情条的总高度（含它与网格之间的 10dp 间距）。
+ *
+ * FAB 上移的量就是它 —— 详情条一出现，FAB 同步抬这么高。
+ * 数值取的是「内容两行 + 上下 12dp 内边距」的实测高度：
+ * 标题行最多两行（20sp × 2 = 40dp 上下）+ 间距 3dp + 副标题 16dp ≈ 62dp，
+ * 加 10dp 间距、再留 8dp 余量避免贴脸 = 80dp。
+ * 单行标题时详情条实际更矮，FAB 会稍微多抬一点 —— 这比压住详情条好看。
+ */
+private val DETAIL_BAR_LIFT = 80.dp
+
 /** 一格最少 / 最多多高。行少时不至于撑成一整屏的大格子，行多时也不挤成一团 */
 private val MIN_GRID_ROW_HEIGHT = 56.dp
 private val MAX_GRID_ROW_HEIGHT = 108.dp
@@ -1945,6 +2045,10 @@ private val AXIS_LABEL_LIFT = 8.dp
 fun WeekGrid(
     classes: List<ClassEntity>,
     highlightDay: String?,
+    // 当前被单击选中的课程块。**由外部持有**（提升到 MainScreen）——
+    // 因为右下角的 FAB 要读它来决定是否上移，避开底部浮出的详情条。
+    selectedClassId: Int?,
+    onSelectClassId: (Int?) -> Unit,
     onEdit: (ClassEntity) -> Unit
 ) {
     val span = remember(classes) { TimeAxis.spanOf(classes) }
@@ -1961,10 +2065,10 @@ fun WeekGrid(
     // 但用户想看的是「这一整列」—— 所以状态提升到这里，由格子往上报，整列一起亮。
     // 这是**比手动选中更弱**的一档：悬停只是「预告」，不该和真正选中的列抢眼。
     var hoveredDay by remember { mutableStateOf<String?>(null) }
-    // 当前被单击选中的课程块。单击只高亮、不进编辑；双击才进编辑。
-    // 和列表界面（WeekDayList）用同一个状态语义，两个界面的手感一致。
-    // 不 remember 到 highlightDay 上：换周也该保留选中（用户可能只是想对照着看）
-    var selectedClassId by remember { mutableStateOf<Int?>(null) }
+    // 由 id 反查课程。被删掉或换周后块不在了，详情卡自动消失（不用手动兜 null）
+    val selectedClass = remember(selectedClassId, classes) {
+        selectedClassId?.let { id -> classes.firstOrNull { it.id == id } }
+    }
     if (span == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
@@ -2271,7 +2375,7 @@ fun WeekGrid(
                     modifier = Modifier
                         .fillMaxSize()
                         .pointerInput(Unit) {
-                            detectTapGestures { selectedClassId = null }
+                            detectTapGestures { onSelectClassId(null) }
                         }
                 )
                 // ── 底层：时间轴（竖向列分隔 + 横向时刻线 + 左侧刻度）──
@@ -2374,7 +2478,7 @@ fun WeekGrid(
                             titleLines = titleLines,
                             selectedClassId = selectedClassId,
                             // 单击：只高亮，不进编辑
-                            onSelectClass = { selectedClassId = it.id },
+                            onSelectClass = { onSelectClassId(it.id) },
                             // 双击：进编辑
                             onEdit = onEdit
                         )
@@ -2382,7 +2486,125 @@ fun WeekGrid(
                 }
             }
 
+            // ── 选中详情卡 ──
+            // 单击课程块只是高亮，格子太窄放不下完整信息（教室、老师经常要截断）。
+            // 所以选中后在网格下方浮出一条详情：把这一节的信息补齐，并明确提示「双击编辑」——
+            // 否则用户点了一下、什么都没发生（除了变蓝），会以为这个应用坏了。
+            AnimatedVisibility(
+                visible = selectedClass != null,
+                enter = fadeIn(tween(ENTER_MS)) + expandVertically(tween(ENTER_MS), expandFrom = Alignment.Top),
+                exit = fadeOut(tween(EXIT_MS)) + shrinkVertically(tween(EXIT_MS), shrinkTowards = Alignment.Top)
+            ) {
+                selectedClass?.let { cls ->
+                    ClassDetailCard(
+                        cls = cls,
+                        isToday = cls.dayOfWeek == highlightDay,
+                        onEdit = { onEdit(cls) },
+                        onDismiss = { onSelectClassId(null) }
+                    )
+                }
+            }
+
             Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+/**
+ * 选中课程后浮在网格下方的详情条。
+ *
+ * 布局是**两行 + 右侧动作**：第一行课程名（可折两行），第二行时间 · 教室 · 老师。
+ * 左侧一条 4dp 的竖条沿用课程块的配色规则（今日=蓝 / 非今日=灰），
+ * 这样详情条和网格里被选中的那一块在视觉上是同一个东西。
+ */
+@Composable
+private fun ClassDetailCard(
+    cls: ClassEntity,
+    isToday: Boolean,
+    onEdit: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    val isDark = scheme.surface.luminance() < 0.5f
+    val accent = if (isToday) scheme.primary else if (isDark) scheme.surfaceVariant else scheme.outline
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp, start = 8.dp, end = 8.dp)
+            // 双击整条也能进编辑，和网格里的手感一致
+            .clickable(onClick = onEdit),
+        shape = SHAPE_CARD,
+        colors = CardDefaults.cardColors(containerColor = scheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.45f))
+    ) {
+        Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+            // 左侧色条：和网格里的课程块同一条规则
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(accent)
+            )
+            Column(modifier = Modifier.weight(1f).padding(horizontal = 14.dp, vertical = 12.dp)) {
+                Text(
+                    text = cls.title,
+                    fontSize = 15.sp,
+                    lineHeight = 20.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = scheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = buildString {
+                        append("${dayLabel[cls.dayOfWeek] ?: ""} ")
+                        append("${cls.startTime}–${cls.endTime}")
+                        if (cls.room.isNotBlank()) append(" · ${cls.room}")
+                        if (cls.teacher.isNotBlank()) append(" · ${cls.teacher}")
+                    }.trim(),
+                    fontSize = 12.sp,
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            // 右侧动作：编辑 / 关闭两个图标按钮。
+            //
+            // 原来这里只写了一句「双击编辑」——但详情条是个弹出层，用户第一反应是去点它，
+            // 而不是猜「要双击」。现在给一个**看得见的编辑按钮**（铅笔），双击手势仍然保留，
+            // 两种操作都通向编辑，互不冲突。
+            //
+            // 按钮尺寸 34dp：比 24dp 的窄按钮好点，也不至于把详情条撑高。
+            Row(
+                modifier = Modifier.padding(end = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onEdit,
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = "编辑课程",
+                        modifier = Modifier.size(18.dp),
+                        tint = scheme.primary
+                    )
+                }
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "取消选中",
+                        modifier = Modifier.size(18.dp),
+                        tint = scheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 }
@@ -3049,6 +3271,9 @@ fun WeekView(
     onShownWeekChange: (Int) -> Unit,
     onCalibrate: () -> Unit,
     onEdit: (ClassEntity) -> Unit,
+    /** 选中的课程块 id。由 MainScreen 持有 —— FAB 也要读它来上移避开详情条 */
+    selectedClassId: Int?,
+    onSelectClassId: (Int?) -> Unit,
     /**
      * 课表用哪种渲染：
      *  - true  → 时间轴网格（实验性，支持点列头高亮 / 加宽）
@@ -3095,7 +3320,9 @@ fun WeekView(
                 mode = mode,
                 shownWeek = shownWeek,
                 today = today,
-                onEdit = onEdit
+                onEdit = onEdit,
+                selectedClassId = selectedClassId,
+                onSelectClassId = onSelectClassId
             )
         } else {
             LegacyWeekView(classes = visible, onEdit = onEdit)
@@ -3117,7 +3344,10 @@ private fun ExperimentalWeekContent(
     mode: WeekMode,
     shownWeek: Int,
     today: String,
-    onEdit: (ClassEntity) -> Unit
+    onEdit: (ClassEntity) -> Unit,
+    /** 选中的课程块 id，由 MainScreen 持有 —— 详情条和 FAB 上移都要读它 */
+    selectedClassId: Int?,
+    onSelectClassId: (Int?) -> Unit
 ) {
     // 内容的过渡同时管两件事，靠 transitionSpec 区分：
     //  - 切「表格 / 列表」→ 淡入淡出 + 轻微横向位移，方向跟着分段控件的左右位置走
@@ -3155,6 +3385,8 @@ private fun ExperimentalWeekContent(
             WeekMode.GRID -> WeekGrid(
                 classes = visible,
                 highlightDay = dayHighlight,
+                selectedClassId = selectedClassId,
+                onSelectClassId = onSelectClassId,
                 onEdit = onEdit
             )
             WeekMode.LIST -> WeekDayList(
@@ -3719,12 +3951,15 @@ private fun SectionTitle(text: String) {
 
 @Composable
 private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    // M3 规范里的「填充卡」：用容器色（surfaceVariant 就是浅色下最接近 surfaceContainer 的那一档），
+    // 不投影、只描一条极淡的边。Google 设置页的分组卡就是这个形态。
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = SHAPE_CARD,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = scheme.surfaceVariant.copy(alpha = 0.55f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = cardBorder()
+        border = BorderStroke(1.dp, scheme.outlineVariant)
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
@@ -3753,18 +3988,27 @@ private fun RomGuideRow(title: String, detail: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun SwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {    Row(
+private fun SwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(label, fontSize = 15.sp)
+        Text(label, fontSize = 15.sp, color = scheme.onSurface)
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            // M3 开关配色：打开 = primary 轨道 + onPrimary 滑块；
+            // 关闭 = surfaceVariant 轨道 + outline 滑块（滑块比轨道亮，停在左边时仍看得见）。
+            // 原来「打开」用的是 primary α0.5 的轨道，颜色发灰，和 Google 应用的开关不像
             colors = SwitchDefaults.colors(
-                checkedThumbColor = MaterialTheme.colorScheme.primary,
-                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                checkedThumbColor = scheme.onPrimary,
+                checkedTrackColor = scheme.primary,
+                checkedBorderColor = Color.Transparent,
+                uncheckedThumbColor = scheme.outline,
+                uncheckedTrackColor = scheme.surfaceVariant,
+                uncheckedBorderColor = Color.Transparent
             )
         )
     }

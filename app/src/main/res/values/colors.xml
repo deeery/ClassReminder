@@ -1,4 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#FFFFFF</color>
+
+    <!-- 窗口底色 / 闪屏底色。必须和 ui/Theme.kt 里 ColorScheme 的对应值保持一致，
+         否则启动瞬间会看到一闪而过的另一种颜色。
+         - app_background  ← lightColorScheme.background（Google Gray 50）
+         - app_surface     ← lightColorScheme.surface（白）
+         - app_background_dark ← darkColorScheme.background（#121212）
+         - app_surface_dark    ← darkColorScheme.surface（#1E1E1E） -->
+    <color name="app_background">#F8F9FA</color>
+    <color name="app_surface">#FFFFFF</color>
+    <color name="app_background_dark">#121212</color>
+    <color name="app_surface_dark">#1E1E1E</color>
 </resources>

@@ -35,7 +35,8 @@ MainActivity (单 Activity)
 | 文件 | 作用 |
 |---|---|
 | `ui/MainScreen.kt` | Compose UI：底部栏、快速便签（选中 / 拖动排序 / 左滑 / 回撤）、周课表、设置页面、添加/编辑对话框 |
-| `ui/Theme.kt` | 自定义主题：浅色/深色调色板、ThemeMode 枚举 |
+| `ui/TodayScreen.kt` | 「今天」首屏：当前/下一节课主卡、今天剩余时间轴、便签摘要 |
+| `ui/Theme.kt` | 自定义主题：Google Blue 调色板（浅 `#1A73E8` / 深 `#8AB4F8`）、ThemeMode 枚举 |
 | `data/MainViewModel.kt` | ViewModel：连接 UI 和 Room 数据库，便签的增删改排序与回撤栈 |
 | `data/ClassEntity.kt` | Room 实体（id, 标题, 星期, 开始/结束时间, 教室, 教师, 周次, 日期） |
 | `data/ClassDao.kt` | Room DAO（查询、插入、删除） |
@@ -49,6 +50,73 @@ MainActivity (单 Activity)
 | `Prefs.kt` | SharedPreferences 封装（提醒时间、主题模式、开机自启等） |
 
 ## 更新日志
+
+### v4.0 — 全新 Material 3 界面（分支 `redesign-material3`）
+
+风格对齐 Google 官方应用。**这是独立分支**，`main` 不受影响。
+
+**1. 配色换成 Google 标准蓝**
+
+`Theme.kt` 主色从 `#1565C0` 换成 Google Blue：浅色 `#1A73E8` / 深色 `#8AB4F8`。同时补齐 Material 3 语义角色 —— 之前只定义了 `primary` / `surface` 等少数几个，缺的角色全靠 M3 默认值兜底，深浅两套的实际观感并不统一：
+
+| 角色 | 浅色 | 深色 |
+|---|---|---|
+| `primary` | `#1A73E8` | `#8AB4F8` |
+| `primaryContainer` | `#D3E3FD` | `#1A3D7C` |
+| `secondary`（临时提醒黄） | `#F9AB00` | `#FDD663` |
+| `tertiary` | `#188038` | `#81C995` |
+| `background` | `#F8F9FA` | `#121212` |
+| `surface` | `#FFFFFF` | `#1E1E1E` |
+| `surfaceVariant` | `#F1F3F4` | `#2A2B2D` |
+| `onSurfaceVariant` | `#5F6368` | `#9AA0A6` |
+| `outline` / `outlineVariant` | `#80868B` / `#DADCE0` | `#5F6368` / `#3C4043` |
+
+中性色全部取自 **Google Gray 灰阶**（`#F8F9FA` / `#5F6368` / `#DADCE0` / `#E8EAED`），这是 Google 应用界面里那套「冷灰」。
+
+**2. 新增「今天」首屏（`TodayScreen.kt`）**
+
+导航从 3 项扩成 4 项：**今天 / 课表 / 便签 / 设置**。
+
+设计的出发点是「用户打开 App 只想知道我现在该干什么」，所以这一页按**紧迫度**而不是数据结构排布：
+
+- **主卡**：正在上课时用**实心主色卡 + 倒计时**（「还剩 27 分钟」），没课则显示下一节。这是 Google Calendar「Now」卡的同一手法——用颜色本身表达「此刻」，不靠图标或文字解释。
+- **今天剩余**：时间列固定 46dp 左对齐，一眼扫完后面还有什么。
+- **便签摘要**：最多 2 条，点进便签页。便签不再占首屏，但伸手可及。
+
+时间每 **30 秒**自刷新（和前台 Service 轮询节奏一致），所以「还剩 N 分钟」会自己走字，不用退回重进。
+
+`Prefs.getLastTab` 的语义随之变化：`0=今天 / 1=课表 / 2=便签`，设置页（3）不记录。老版本存的值会被读成新语义（0→今天、1→课表），这是一次性的首屏落点变化，不影响任何数据。
+
+**3. 表格页：选中详情卡 + FAB 上移**
+
+单击课程块只高亮，但格子太窄（正常列约 50–70dp）放不下完整信息，教室/老师经常被截断。所以选中后在网格下方浮出一条 **`ClassDetailCard`**：
+
+- 左侧 4dp 竖条沿用课程块的配色规则（**今日=蓝 / 非今日=灰**），详情条和被选中那一块在视觉上是同一个东西
+- 两行信息：课程名（可折两行）+「周二 14:00–15:40 · 教二 305 · 王海燕」
+- 右侧两个 **34dp 图标按钮**：**铅笔（编辑，`primary` 色）** + **×（取消选中，`onSurfaceVariant` 色）**
+- 整条仍可双击进编辑，和网格里的手感一致（双击手势与铅笔按钮并存，两条路都通向编辑）
+
+**为什么把「双击编辑」文字换成铅笔按钮**：详情条是弹出层，用户第一反应是去点它，而不是猜「要双击」；而且它原本正好压在右下角 `+`（FAB）上。现在编辑有了看得见的入口，`+` 则整体上移让位。
+
+**FAB 上移**：`selectedClassId` 从 `WeekGrid` 提升到 `MainScreen`，让 `Scaffold` 里的 FAB 也能读到。选中时 FAB 通过 `animateDpAsState` + `Modifier.padding(bottom = DETAIL_BAR_LIFT)` 上推 **80dp**（`DETAIL_BAR_LIFT = 80.dp`，即详情条总高含 10dp 间距）。用 `padding` 而非 `offset`：padding 会真正推动按钮并让 Scaffold 的 FAB 槽位变高，`offset` 只是视觉位移、会和详情条叠在一起。
+
+**实测**（Medium_Phone，density 420 / ×2.625）：FAB 从 `y∈[1911,1974]` 移到 `y∈[1701,1764]`，正好上移 210px = **80dp**；FAB 底边 1764 与详情条顶边 1896 之间留 **50dp** 空隙，不再重叠。取消选中后 FAB 准确回到 1911。
+
+**4. 课程表模式切换：保留原滑块式**
+
+「表格 / 列表」**沿用原有的滑块式** `WeekModeSwitch`，没有改成 M3 分段按钮：`onSurface` α6% 底 + `primary` 实心滑块（`animateIntOffsetAsState` / `tween(200)`）+ 选中 `Bold`/未选中 `Normal` 字重 + 圆角 8dp/6dp。
+
+**为什么放弃 M3 Segmented Button**：官方的 `SingleChoiceSegmentedButtonRow` 从 material3 **1.2.0** 才有，本项目锁在 compose-bom `2024.01.00`（material3 1.1.2），且构建必须 `--offline`，拉不到新版本，所以只能手搓。但手搓版与原有滑块式视觉接近、且滑块式交互更直观（滑块滑动而非边框内填色），故回到原方案。
+
+**5. 设置页与底栏的 M3 微调**
+
+- `SettingsCard` 从「白底 + 极淡描边」改成 M3 的**填充卡**：`surfaceVariant` α0.55 底 + `outlineVariant` 描边，不投影。这是 Google 设置页分组卡的形态。
+- `Switch` 配色对齐 M3：打开 = `primary` 轨道 + `onPrimary` 滑块；关闭 = `surfaceVariant` 轨道 + `outline` 滑块。原来「打开」用 `primary` α0.5 的轨道，颜色发灰。
+- 底栏状态行改用 `surfaceVariant` 半透明底 + `outlineVariant` 分隔线，`NavigationBar` 显式 `tonalElevation = 0.dp`（本项目整体是「白底 + 极淡描边」的扁平风，导航栏再抬一层灰会显得脏）。导航项未选中色统一用 `onSurfaceVariant`。
+
+**验收页**：`build/preview/material3-preview.html`（四屏并列，可切深浅色、可演示选中课块 → 详情卡 + FAB 上移）。
+
+**取舍**：为了跨文件复用 `SHAPE_CARD` / `ENTER_MS` / `TemporaryBadge`，把它们从 `private` 放宽到 `internal`（Kotlin 的 `private` 在文件作用域是「本文件可见」，`TodayScreen.kt` 拿不到）。
 
 ### v3.20 — 表格课程块的「单击高亮 / 双击编辑」与色条分流
 
