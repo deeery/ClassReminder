@@ -6,13 +6,18 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- For Android 13+ runtime notification permission -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Required by setFullScreenIntent() for the lock-screen popup (Android 14+ gates this
+         for apps that are not calling/alarm apps; the user may need to enable it in settings) -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- Boot completed to optionally auto-start service -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 到点时唤醒屏幕：ColorOS 等 ROM 会拦全屏弹窗，只剩「通知 + 亮屏」这条可靠路径 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="ClassReminder"
+        android:label="${appLabel}"
         android:supportsRtl="true">
         <!-- Main launcher activity -->
         <activity android:name="com.example.classreminder.MainActivity"

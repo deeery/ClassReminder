@@ -46,6 +46,10 @@ MainActivity (单 Activity)
 
 ## 更新日志
 
+### v1.1
+
+- **版本升级**：versionName 升级到 1.1（versionCode 2），正式发布版
+
 ### v2.0 — 稳定版
 
 - **修复所有崩溃问题**：Android 14 foregroundServiceType 权限缺失、无通知权限时 startForeground 崩溃、POST_NOTIFICATIONS 权限检查
