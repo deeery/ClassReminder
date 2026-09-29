@@ -1827,11 +1827,28 @@ private val MAX_GRID_ROW_HEIGHT = 108.dp
 /** 课程块的最小高度，太短的课也得看得见 */
 private val MIN_BLOCK_HEIGHT = 30.dp
 
+/**
+ * 课程块四周留的缝隙。相邻两节课的块贴在一起时，上下叠着看起来像一整条，
+ * 分不清是「一节长课」还是「两节课连上」。留一点缝，每节课的边界就立刻清楚了。
+ * 取 5dp：再小看不出缝，再大矮块的可用高度就被吃没了。
+ */
+private val BLOCK_GAP = 5.dp
+
 /** 块矮于这个高度就只留课程名，教室让位 */
 private val BLOCK_ROOM_MIN_HEIGHT = 46.dp
 
 /** 表头（星期那一行）占的高度，算可用高度时要扣掉。今天那列多一行「今日」角标，留宽裕些 */
 private val GRID_HEADER_HEIGHT = 46.dp
+
+/**
+ * 网格底纹的透明度：横向时刻线 / 竖向列分隔。
+ *
+ * 两者都是**底纹**而不是内容，所以都比课程块淡得多。竖线刻意比横线再淡一档：
+ * 横线承载「时间刻度」这层信息（要和左侧标签对齐），竖线只是帮眼睛定位到某一天，
+ * 两者同等强度的话，网格会显得比课本身还抢眼。
+ */
+private const val GRID_LINE_ALPHA = 0.08f
+private const val GRID_COLUMN_ALPHA = 0.05f
 
 /** 单列最大宽度，免得大屏上几列被拉得太开 */
 private val MAX_COLUMN_WIDTH = 76.dp
@@ -1941,10 +1958,11 @@ fun WeekGrid(
         val gridHeight = rowHeight * rowCount
 
         // 左侧刻度：高亮着某一列时，标那一列各事项的起止时刻（正好对齐它课程块的上下边界）；
-        // 一列都没高亮时退回等距的固定间隔。
-        val marksNow = remember(classes, activeDay, rowCount, hoursPerRow, span) {
+        // 一列都没高亮时退回**真实整点**刻度（见 TimeAxis.roundMarks）——
+        // 原来的相对刻度会标出 07:43、09:13 这种读不出含义的时刻
+        val marksNow = remember(classes, activeDay, span, hoursPerRow) {
             if (activeDay == null) {
-                (0 until rowCount).map { row -> span.startMinute + row * hoursPerRow * 60 }
+                TimeAxis.roundMarks(span, hoursPerRow * 60)
             } else {
                 classes.filter { it.dayOfWeek == activeDay }
                     .flatMap { cls ->
@@ -2046,9 +2064,28 @@ fun WeekGrid(
             }
 
             Box(modifier = Modifier.fillMaxWidth().height(gridHeight)) {
-                // ── 底层：时间轴（横线 + 左侧刻度）──
+                // ── 底层：时间轴（竖向列分隔 + 横向时刻线 + 左侧刻度）──
                 // 横线从刻度栏右侧铺到最右；每一条都对齐一个真实时刻，和标签一一对应。
                 // 新旧两套刻度各带一个 alpha，交叉淡入淡出。
+                //
+                // 竖线是本版新加的：原来七天之间没有任何分隔，一旦每列都排满了课程块，
+                // 整片网格就糊成一块，看不出「哪一格属于星期几」。竖线只画在列与列之间、
+                // 且刻意画得比横线更淡 —— 它是辅助定位的**底纹**，不该跟课程块抢视线。
+                //
+                // 列边界的位置：依次累加各列宽度。密度与列宽都不常变，算一次缓存住。
+                // 最后一条（网格右边缘）不画 —— 它贴着屏幕边，画了反而显脏
+                val densityForEdges = LocalDensity.current
+                val columnEdgesPx = remember(columnWidths, labelWidthPx, densityForEdges) {
+                    with(densityForEdges) {
+                        buildList {
+                            var x = labelWidthPx
+                            for (w in columnWidths.dropLast(1)) {
+                                x += w.toPx()
+                                add(x)
+                            }
+                        }
+                    }
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -2058,7 +2095,7 @@ fun WeekGrid(
                                 marks.forEach { minute ->
                                     val y = mapping.fractionOf(minute) * gridHeightPx
                                     drawLine(
-                                        color = lineBase.copy(alpha = 0.08f * alpha),
+                                        color = lineBase.copy(alpha = GRID_LINE_ALPHA * alpha),
                                         start = Offset(labelWidthPx, y),
                                         end = Offset(size.width, y),
                                         strokeWidth = 1f
@@ -2067,6 +2104,16 @@ fun WeekGrid(
                             }
                             drawMarks(axisMarksPrev, 1f - axisCross)
                             drawMarks(axisMarks, axisCross)
+
+                            // 竖向列分隔：只画列与列之间，不画最右那条边
+                            columnEdgesPx.forEach { x ->
+                                drawLine(
+                                    color = lineBase.copy(alpha = GRID_COLUMN_ALPHA),
+                                    start = Offset(x, 0f),
+                                    end = Offset(x, gridHeightPx),
+                                    strokeWidth = 1f
+                                )
+                            }
                         }
                 )
                 Box(modifier = Modifier.width(labelWidth).fillMaxHeight()) {
@@ -2103,7 +2150,17 @@ fun WeekGrid(
 /**
  * 左侧刻度的一层：同一套时刻，整体带一个透明度。
  * 换高亮列时新旧两套各铺一层、交叉淡入淡出，所以刻度是「渐变」而不是跳变。
+ *
+ * **为什么要做防重叠**：刻度是按真实时刻落的，两个相邻时刻在纵轴上可能只差几像素 ——
+ * 比如两节课 08:00 结束、08:05 开始，或者相邻课表只隔 15 分钟。11sp 的文字约 15dp 高，
+ * 布局上就会叠在一起，变成两团糊掉的黑影，比不标时刻还难读。
+ *
+ * 处理方式：**从下往上**（实际是从前到后，即按 y 递增）逐个放，每个标签至少比上一个低
+ * [AXIS_LABEL_MIN_GAP]；实在挤不下就整条丢掉 —— 宁可少标一个时刻，也不要叠出一团糊字。
+ * 丢掉的一定是「被前一个挡住的那一个」，所以保留下来的密度仍然均匀。
  */
+private val AXIS_LABEL_MIN_GAP = 15.dp
+
 @Composable
 private fun AxisMarkLabels(
     marks: List<Int>,
@@ -2112,27 +2169,43 @@ private fun AxisMarkLabels(
     gridHeight: Dp
 ) {
     if (alpha <= 0.01f) return
+
+    // 先算好「哪些标签放得下、各自放在哪个 y」。用 remember 缓存：
+    // 这套计算只跟刻度与映射有关，不必每帧重算
+    val placedLabels = remember(marks, mapping, gridHeight) {
+        var lastY = Dp.Unspecified
+        marks.mapNotNull { minute ->
+            // 标签顶边压着它对应的那条线往上抬一点，所以文字基线正好落在线上
+            val y = (gridHeight * mapping.fractionOf(minute) - AXIS_LABEL_LIFT).coerceAtLeast(0.dp)
+            if (lastY == Dp.Unspecified || y - lastY >= AXIS_LABEL_MIN_GAP) {
+                lastY = y
+                minute to y
+            } else null
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
-        marks.forEach { minute ->
+        placedLabels.forEach { (minute, y) ->
             Text(
                 text = TimeAxis.labelOf(minute),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+                // 刻度是「负空间」里的信息，用次要色而不是主色 ——
+                // 主色留给课程块和时间本身，左侧再抢一次主色会让整屏没有主次
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
+                softWrap = false,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(end = 4.dp)
-                    .offset(
-                        y = (gridHeight * mapping.fractionOf(minute) - AXIS_LABEL_LIFT)
-                            .coerceAtLeast(0.dp)
-                    )
+                    .offset(y = y)
                     // alpha = 1 时不挂图层：平时两套刻度里总有一套是全不透明的，
                     // 给它单独开一层 RenderNode 没有意义
                     .then(if (alpha < 1f) Modifier.alpha(alpha) else Modifier)
             )
         }
     }
+
 }
 
 /**
@@ -2199,7 +2272,14 @@ private fun DayColumn(
             }
     ) {
         placed.forEach { spot ->
-            val blockHeight = (gridHeight * spot.heightFraction).coerceAtLeast(MIN_BLOCK_HEIGHT)
+            // 块与块之间留出一点缝隙。原来相邻两节课的块是严丝合缝贴在一起的，
+            // 上下叠在一起时（比如 08:00-09:35 接着 09:45-11:20）看起来像一整块长条，
+            // 分不清是「一节长课」还是「两节连着的课」。
+            // 注意：缝隙从**块的高度里扣**而不是往外撑 —— 往外撑会让块超出它自己的时间刻度；
+            // 而 `Box` 上再套 `.padding` 等于从内部缩内容，所以高度按原始比例算，
+            // 只用 padding 留缝，块的时间边界仍然精确对齐刻度线。
+            val blockHeight = (gridHeight * spot.heightFraction)
+                .coerceAtLeast(MIN_BLOCK_HEIGHT)
             val showRoom = blockHeight >= BLOCK_ROOM_MIN_HEIGHT
             // 自适应：块越高 → 标题行数越多、字号越大；块矮时缩小字号、减少行数，尽量完整显示
             val blockFontScale = (blockHeight.value / 80f).coerceIn(0.62f, 1f)
@@ -2215,6 +2295,9 @@ private fun DayColumn(
                     )
                     .fillMaxWidth(spot.widthFraction)
                     .height(blockHeight)
+                    // 缝隙只做在块**内部**：块本身的高度仍严格等于它占的时间，
+                    // 所以块的上下边界永远压在对应的刻度线上，不会因为留缝而漂移
+                    .padding(horizontal = BLOCK_GAP / 2, vertical = BLOCK_GAP / 2)
             ) {
                 GridCell(
                     cls = spot.cls,
@@ -2268,14 +2351,20 @@ private fun GridCell(
     val pressed by interaction.collectIsPressedAsState()
     val active = maxOf(hover, if (pressed) 1f else 0f)
 
-    // 悬停 / 按下时的描边与抬升。格子很小（宽 40~76dp），所以反馈要「轻」——
-    // 一条细描边 + 一点点阴影就够，画粗了会糊成一团
-    val outlineColor = lerpColor(
-        Color.Transparent,
-        scheme.primary.copy(alpha = if (isDark) 0.55f else 0.45f),
-        active
-    )
-    val borderWidth = lerpDp(0.dp, 1.dp, active)
+    // 块底色的默认描边：一块「存在感很轻」的边界。相邻块之间只隔 5dp，
+    // 而长期课的底色都是 surface，只靠底色差别分不出两块之间的分界 —— 这根线就是分界本身。
+    // 深色下不能靠灰（surface 与 onSurface 只差 1.78:1），所以用一层淡主色
+    val defaultOutline = if (isDark) scheme.primary.copy(alpha = 0.16f)
+    else scheme.outline.copy(alpha = 0.40f)
+    // 悬停 / 按下时描边换成明显的主色。格子很小（宽 40~76dp），反馈必须「轻」——
+    // 一条细描边 + 一点点抬起就够，画粗了会糊成一团
+    val hoverOutline = scheme.primary.copy(alpha = if (isDark) 0.62f else 0.52f)
+    val outlineColor = lerpColor(defaultOutline, hoverOutline, active)
+
+    // 左侧竖色条：给每节课一个可扫视的锚点。临时课用暖黄（和它的底色同族），
+    // 长期课用主色 —— 一眼扫过去就能分出「这周固定的课」和「临时加的课」
+    val accentBarColor = if (isTemporary) scheme.secondary else scheme.primary.copy(alpha = 0.55f)
+
     val scale = 1f - 0.02f * (if (pressed) 1f else 0f) + 0.01f * hover
     val elevation by animateDpAsState(
         targetValue = when {
@@ -2303,32 +2392,48 @@ private fun GridCell(
         shape = SHAPE_SMALL,
         elevation = CardDefaults.cardElevation(defaultElevation = elevation),
         colors = CardDefaults.cardColors(containerColor = baseContainer),
-        // 描边用颜色 + 粗细一起过渡，悬停出现 / 移开时不会「跳一下」
-        border = if (active > 0.01f) BorderStroke(borderWidth, outlineColor) else null
+        // 描边始终存在（默认极淡、悬停转主色）。宽度与颜色都跟着 active 过渡，不会「跳一下」
+        border = BorderStroke(
+            width = lerpDp(0.75.dp, 1.dp, active),
+            color = outlineColor
+        )
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 4.dp, vertical = 3.dp),
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = cls.title,
-                fontSize = titleSize,
-                lineHeight = titleSize * 1.2f,
-                fontWeight = FontWeight.Medium,
-                maxLines = titleLines,
-                overflow = TextOverflow.Ellipsis
+        // 左侧一根竖色条：课程块之间的区分不能只靠文字。它和列表卡片的竖条同源，
+        // 但更窄（块本身就小），只是给每节课一个「有边界」的锚点
+        Row(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .fillMaxHeight()
+                    .background(accentBarColor)
             )
-            // 块够高时显示教室，否则只留科目名
-            if (showRoom && cls.room.isNotBlank()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = 4.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
+                verticalArrangement = Arrangement.Center
+            ) {
                 Text(
-                    text = cls.room,
-                    fontSize = roomSize,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                    text = cls.title,
+                    fontSize = titleSize,
+                    lineHeight = titleSize * 1.2f,
+                    fontWeight = FontWeight.Medium,
+                    // 标题是块里最重要的信息，用主文字色保证对比度；
+                    // 「临时」那层含义交给左侧色条和底色，不再额外压一层颜色到文字上
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = titleLines,
+                    overflow = TextOverflow.Ellipsis
                 )
+                // 块够高时显示教室，否则只留科目名
+                if (showRoom && cls.room.isNotBlank()) {
+                    Text(
+                        text = cls.room,
+                        fontSize = roomSize,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                    )
+                }
             }
         }
     }

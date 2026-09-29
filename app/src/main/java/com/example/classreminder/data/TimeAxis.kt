@@ -133,6 +133,26 @@ object TimeAxis {
         return String.format(java.util.Locale.getDefault(), "%02d:%02d", normalized / 60, normalized % 60)
     }
 
+    /**
+     * 没有任何一列被高亮时，纵轴该标哪些时刻。
+     *
+     * 返回 [span] 范围内、对齐到 [stepMinutes] 整数倍的「整点」时刻。之所以要单独抽出来并
+     * **对齐到整点**，是因为之前的做法是「span 起点 + n × 步长」——span 起点由本周最早的课决定，
+     * 通常是 07:43 这种时间，于是纵轴标出来就是 07:43、09:13…，既不是整点也没法当钟表读。
+     *
+     * 结果按升序，且落在 `[span.startMinute, span.endMinute]` 闭区间内。
+     * 若该范围内一个整点都没有（跨度极短），退回只标起点一个，保证轴不会空着。
+     */
+    fun roundMarks(span: Span, stepMinutes: Int): List<Int> {
+        if (stepMinutes <= 0) return listOf(span.startMinute)
+        // 不早于 span 起点的第一个 step 的整数倍
+        val first = ceilDiv(span.startMinute, stepMinutes) * stepMinutes
+        val marks = generateSequence(first) { it + stepMinutes }
+            .takeWhile { it <= span.endMinute }
+            .toList()
+        return marks.ifEmpty { listOf(span.startMinute) }
+    }
+
     /** 线性映射下某个时间点的比例（0..1）。分段映射请用 [Mapping.fractionOf] */
     fun fractionOf(minute: Int, span: Span): Float =
         ((minute - span.startMinute).toFloat() / span.minutes).coerceIn(0f, 1f)

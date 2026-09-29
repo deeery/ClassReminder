@@ -338,4 +338,55 @@ class TimeAxisTest {
 
         assertTrue(placed.heightFraction > 0f)
     }
+
+    // ── roundMarks：没有高亮列时纵轴标哪些「整点」 ──
+    // 之前这里标的是「span 起点 + n × 步长」，span 起点由最早一节课决定，
+    // 于是纵轴会出现 07:43、09:13 这种读不出含义的时刻。
+
+    @Test
+    fun roundMarksAlignsToWholeHours() {
+        // 07:43 开始的一周，按 1 小时步进，第一个刻度应是 08:00 而不是 07:43
+        val span = TimeAxis.Span(7 * 60 + 43, 12 * 60)
+        val marks = TimeAxis.roundMarks(span, 60)
+
+        assertEquals(listOf(8 * 60, 9 * 60, 10 * 60, 11 * 60, 12 * 60), marks)
+        assertTrue("刻度必须是整点", marks.all { it % 60 == 0 })
+    }
+
+    @Test
+    fun roundMarksUsesStepMultiple() {
+        // 步长 2 小时：刻度应为 08:00 / 10:00 / 12:00，而不是 08:00 / 09:00 …
+        val span = TimeAxis.Span(7 * 60 + 43, 12 * 60 + 30)
+        val marks = TimeAxis.roundMarks(span, 120)
+
+        assertEquals(listOf(8 * 60, 10 * 60, 12 * 60), marks)
+    }
+
+    @Test
+    fun roundMarksStaysWithinSpan() {
+        val span = TimeAxis.Span(8 * 60, 10 * 60)
+        val marks = TimeAxis.roundMarks(span, 60)
+
+        // 端点闭区间，且不越界
+        assertEquals(listOf(8 * 60, 9 * 60, 10 * 60), marks)
+        assertTrue(marks.all { it in span.startMinute..span.endMinute })
+    }
+
+    @Test
+    fun roundMarksFallsBackWhenNoWholeHourFits() {
+        // 跨度只有 20 分钟，按 1 小时步进一个整点都落不进来 —— 不能返回空轴
+        val span = TimeAxis.Span(10 * 60 + 5, 10 * 60 + 25)
+        val marks = TimeAxis.roundMarks(span, 60)
+
+        assertEquals(listOf(span.startMinute), marks)
+    }
+
+    @Test
+    fun roundMarksIsAscending() {
+        val span = TimeAxis.Span(8 * 60, 18 * 60)
+        val marks = TimeAxis.roundMarks(span, 60)
+
+        assertEquals(marks.sorted(), marks)
+        assertEquals(marks.distinct(), marks)
+    }
 }
