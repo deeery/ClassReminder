@@ -4,6 +4,9 @@ import android.app.TimePickerDialog
 import android.app.TimePickerDialog as SysTimePickerDialog
 import android.app.DatePickerDialog as SysDatePickerDialog
 import android.os.Build
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -120,15 +123,24 @@ import com.example.classreminder.data.NoteTypeKind
 import com.example.classreminder.data.TimeAxis
 import com.example.classreminder.data.TodaySchedule
 import com.example.classreminder.data.WeekSchedule
+import com.example.classreminder.data.backup.BackupCodec
+import com.example.classreminder.data.backup.BackupDocument
+import com.example.classreminder.data.backup.BackupFormat
+import com.example.classreminder.data.backup.BackupModule
 import com.example.classreminder.data.deadlineCountdown
 import com.example.classreminder.data.deadlineTimeLabel
 import com.example.classreminder.data.hasDeadline
 import com.example.classreminder.data.noteTypeAt
 import com.example.classreminder.data.typeLabel
 import com.example.classreminder.Prefs
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToInt
 
 private val dayOrder = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -656,11 +668,14 @@ fun MainScreen(
                 // 大标题不再写死「今天」，而是按当前时刻给问候语（早上好 / 午安 / …），
                 // 让首屏带一点人的语气。日期与周次仍放副标题，正文就不用再重复一遍。
                 //
-                // **顶栏整体比原先高**：大标题 28sp → 34sp 并且加粗到 SemiBold，
-                // 上下内边距也各加了一档（top 12→14、bottom 14→16）。
-                // 问候语是首屏唯一一句「有人味」的话，用户要求它更大更重 ——
-                // 做成接近 Material 的 displaySmall（36sp）而略收一格，
-                // 免得「早上好。」这四个字在窄屏上折行。
+                // **顶栏整体比原先高**：大标题 28sp → 38sp，上下内边距也各加了一档
+                // （top 12→14、bottom 14→16）。
+                // 问候语是首屏唯一一句「有人味」的话，用户要求它更大 ——
+                // 现在到 38sp（Material 的 displaySmall 是 36sp，这里刻意压过一格）。
+                // **40sp 是上限**：「早上好。」四个字在 360dp 窄屏上就该折行了。
+                //
+                // 字重走 **Light** 而不是 SemiBold：38sp 这个尺寸已经靠字号本身撑起气势了，
+                // 再加重会显得笨重；细体大字更接近 Google 首屏那种「轻但醒目」的调子。
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -670,9 +685,9 @@ fun MainScreen(
                 ) {
                     Text(
                         text = greetingFor(clockNow),
-                        fontSize = 34.sp,
-                        lineHeight = 42.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 38.sp,
+                        lineHeight = 46.sp,
+                        fontWeight = FontWeight.Light,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Spacer(Modifier.height(6.dp))
@@ -944,6 +959,7 @@ fun MainScreen(
                     onAdd = { addingNote = true }
                 )
                 else -> SettingsPage(
+                    viewModel = viewModel,
                     themeMode = themeMode,
                     onThemeModeChanged = onThemeModeChanged,
                     onRequestNotificationPermission = onRequestNotificationPermission,
@@ -1233,6 +1249,9 @@ fun BottomNavigationBar(
         animationSpec = tween(ENTER_MS),
         label = "serviceDotColor"
     )
+    // 深色下选中项的文字用白。原来跟主色同色（Google Blue 600），
+    // 但深色主色本身偏暗，压在深蓝的胶囊底上读起来发闷
+    val isDarkBar = MaterialTheme.colorScheme.surface.luminance() < 0.5f
 
     Column {
         // ── 状态指示行 ──
@@ -1274,10 +1293,12 @@ fun BottomNavigationBar(
                     onClick = { onTabSelected(index) },
                     icon = { Icon(item.icon, contentDescription = item.label) },
                     label = { Text(item.label, fontSize = 11.sp) },
-                    // M3 的选中指示器是 primaryContainer 胶囊 + primary 图标/文字
+                    // M3 的选中指示器是 primaryContainer 胶囊 + primary 图标/文字。
+                    // 深色下文字改白（见上面 isDarkBar 的说明），浅色仍是主色
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        selectedTextColor = if (isDarkBar) Color.White
+                        else MaterialTheme.colorScheme.primary,
                         indicatorColor = MaterialTheme.colorScheme.primaryContainer,
                         unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2662,6 +2683,34 @@ private const val GRID_COLUMN_ALPHA_DARK = 0.09f
 private const val ZEBRA_ALPHA = 0.03f
 private const val ZEBRA_ALPHA_DARK = 0.06f
 
+/**
+ * 表格「列高亮」的强度（点列头高亮某天 / 「今天」那一列的常态弱底）。
+ *
+ * 表头（`WeekGrid` 的列头）与列身（`DayColumn`）**共用这一组值** ——
+ * 两边原来各自硬编码了同样的数字，改一处漏一处就会出现「表头和列身深浅对不上、
+ * 整列看着头重脚轻」。
+ *
+ * **深色一套单独标定、且整体比原来淡**：深色主题的 surface 本身很暗，
+ * 同一个 α 叠上去观感比浅色主题「更实」——非今日列原来 0.85 几乎铺成一块实心色，
+ * 把课程块的信息压了下去。现在按「淡到刚好看得出选中、但不跟课程块抢视线」标定。
+ */
+private const val TINT_ALPHA_TODAY_LIGHT = 0.14f
+private const val TINT_ALPHA_OTHER_LIGHT = 0.75f
+private const val TINT_ALPHA_TODAY_DARK = 0.22f
+private const val TINT_ALPHA_OTHER_DARK = 0.52f
+
+/** 「今天」列的常态弱底：没被高亮时也铺一层，让今天始终有存在感 */
+private const val TODAY_BASE_TINT_LIGHT = 0.035f
+private const val TODAY_BASE_TINT_DARK = 0.05f
+
+/** 悬停整列：比选中弱一档，「余光级」即可 */
+private const val HOVER_TINT_ALPHA_LIGHT = 0.022f
+private const val HOVER_TINT_ALPHA_DARK = 0.04f
+
+/** 高亮列左右两条细描边的 α。非今日是灰底，要靠描边把边界「拎」出来，所以比今日高 */
+private const val EDGE_ALPHA_TODAY = 0.26f
+private const val EDGE_ALPHA_OTHER = 0.42f
+
 /** 单列最大宽度，免得大屏上几列被拉得太开 */
 private val MAX_COLUMN_WIDTH = 76.dp
 
@@ -2932,17 +2981,17 @@ fun WeekGrid(
                         headerIsDark -> MaterialTheme.colorScheme.surfaceVariant
                         else -> MaterialTheme.colorScheme.outlineVariant
                     }
+                    // 强度全部取自共用常量：表头与列身必须是同一个数字，
+                    // 否则整列会出现「上深下浅」的断层
                     val headerTintAlpha = when {
-                        isActive && isTodayCol && headerIsDark -> 0.34f
-                        isActive && isTodayCol -> 0.14f
-                        isActive && headerIsDark -> 0.85f
-                        isActive -> 0.75f
+                        isActive && isTodayCol && headerIsDark -> TINT_ALPHA_TODAY_DARK
+                        isActive && isTodayCol -> TINT_ALPHA_TODAY_LIGHT
+                        isActive && headerIsDark -> TINT_ALPHA_OTHER_DARK
+                        isActive -> TINT_ALPHA_OTHER_LIGHT
                         // 未选中但「是今天」：给一层很弱的底色，让今天始终有存在感。
                         // 这样即使手动高亮了别的列，也能一眼看出「今天在哪」——
-                        // 光靠一个 9sp 的小角标，注意力被高亮列抢走后就看不见了。
-                        // **数值必须与 DayColumn 的 todayBaseTint 一致**，否则表头与列身的
-                        // 深浅对不上，整列会显得「头重脚轻」
-                        isTodayCol -> if (headerIsDark) 0.07f else 0.035f
+                        // 光靠一个 9sp 的小角标，注意力被高亮列抢走后就看不见了
+                        isTodayCol -> if (headerIsDark) TODAY_BASE_TINT_DARK else TODAY_BASE_TINT_LIGHT
                         // 未选中且非今日：悬停时给一点点底，仍是主色的弱态
                         else -> lerp(0f, 0.10f, headerHover)
                     }
@@ -3376,11 +3425,11 @@ private fun DayColumn(
         else -> MaterialTheme.colorScheme.outlineVariant
     }
     val tintAlpha = when {
-        isToday && isDark -> 0.34f
-        isToday -> 0.14f
+        isToday && isDark -> TINT_ALPHA_TODAY_DARK
+        isToday -> TINT_ALPHA_TODAY_LIGHT
         // 灰底要更深才看得出「选中了」，因为它的色相不抢眼
-        isDark -> 0.85f
-        else -> 0.75f
+        isDark -> TINT_ALPHA_OTHER_DARK
+        else -> TINT_ALPHA_OTHER_LIGHT
     }
     val tint by animateColorAsState(
         targetValue = if (highlighted) selectTintColor.copy(alpha = tintAlpha)
@@ -3393,7 +3442,9 @@ private fun DayColumn(
     // 这样「手动高亮了周四」时，周二（今天）仍然能一眼看出来
     val todayBaseTint by animateColorAsState(
         targetValue = if (isToday && !highlighted) {
-            MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.07f else 0.035f)
+            MaterialTheme.colorScheme.primary.copy(
+                alpha = if (isDark) TODAY_BASE_TINT_DARK else TODAY_BASE_TINT_LIGHT
+            )
         } else Color.Transparent,
         animationSpec = tween(ENTER_MS),
         label = "dayTodayBase"
@@ -3402,7 +3453,7 @@ private fun DayColumn(
     // 选中是「你点了它」，悬停只是「鼠标路过」。两者共用一层主色底，但悬停的 α 只有选中的
     // 三分之一左右 —— 鼠标在网格里扫过时，整列的亮灭必须是「余光级」的，一旦和选中同强，
     // 用户会分不清哪列是真的选上了。
-    val hoverTintAlpha = if (isDark) 0.05f else 0.022f
+    val hoverTintAlpha = if (isDark) HOVER_TINT_ALPHA_DARK else HOVER_TINT_ALPHA_LIGHT
     val hoverTint by animateColorAsState(
         // 已经选中的列不再叠悬停色：同一列上叠两次只会让 α 失控，
         // 而「选中」本来就比「悬停」强，够了
@@ -3422,7 +3473,7 @@ private fun DayColumn(
         animationSpec = tween(ENTER_MS),
         label = "dayEdge"
     )
-    val edgeBaseAlpha = if (isToday) 0.30f else 0.55f
+    val edgeBaseAlpha = if (isToday) EDGE_ALPHA_TODAY else EDGE_ALPHA_OTHER
     val edgeColor = selectTintColor.copy(alpha = edgeBaseAlpha * edgeAlpha)
 
     Box(
@@ -3597,7 +3648,7 @@ private fun GridCell(
     val accentBarWidth = lerpDp(2.dp, HL_BAR_WIDTH, selection)
     // 选中光晕：向外扩一圈 selectColor。浅色主题下要更实才看得出来
     val selectGlow = selectColor.copy(
-        alpha = (if (isDark) 0.30f else 0.17f) * selection
+        alpha = (if (isDark) 0.24f else 0.17f) * selection
     )
 
     val scale = 1f - 0.02f * (if (pressed) 1f else 0f) + 0.01f * hover
@@ -3617,7 +3668,7 @@ private fun GridCell(
     // 在密集网格里读不出来
     val selectionTint by animateColorAsState(
         targetValue = if (selected) {
-            selectColor.copy(alpha = if (isDark) 0.22f else 0.12f)
+            selectColor.copy(alpha = if (isDark) 0.15f else 0.12f)
         } else Color.Transparent,
         animationSpec = tween(ENTER_MS),
         label = "cellSelectionTint"
@@ -4432,6 +4483,7 @@ fun WeekClassCard(
 
 @Composable
 fun SettingsPage(
+    viewModel: MainViewModel,
     themeMode: Int,
     onThemeModeChanged: (Int) -> Unit,
     onRequestNotificationPermission: () -> Unit,
@@ -4592,8 +4644,304 @@ fun SettingsPage(
                 }
                 Spacer(Modifier.height(16.dp))
             }
+
+            // ── 数据备份：模块化导入 / 导出 ──
+            SectionTitle("数据备份")
+            BackupSection(
+                viewModel = viewModel,
+                onMessage = { message -> Toast.makeText(ctx, message, Toast.LENGTH_LONG).show() }
+            )
         }
     }
+}
+
+// ── 数据备份：模块化导入 / 导出 ──────────────────────────────────
+//
+// 「模块化」落在两处：
+//  1. **导出**：文件里放一个模块还是全部模块，走的是同一段代码 ——
+//     两种产出的文件格式完全一样，所以解析只有一条路径，不存在两套逻辑。
+//  2. **导入**：逐个模块勾选，并且**每个模块都要单独确认一次覆盖** ——
+//     课表一次、便签一次，避免「只想恢复便签，结果课表被悄悄换掉」。
+
+/** 导入流程的三个阶段 */
+private enum class BackupStage { NONE, PREVIEW, CONFIRM }
+
+@Composable
+private fun BackupSection(viewModel: MainViewModel, onMessage: (String) -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val classes by viewModel.classes.collectAsState(initial = emptyList())
+    val notes by viewModel.notes.collectAsState(initial = emptyList())
+
+    // 导出：先记下「这次导出哪些模块」，等用户在系统文件选择器里定好位置，再生成内容
+    var exportModules by remember { mutableStateOf<Set<BackupModule>>(emptySet()) }
+    // 导入：解析出的文档 / 勾选的模块 / 待逐个确认的队列
+    var importDoc by remember { mutableStateOf<BackupDocument?>(null) }
+    var importSelected by remember { mutableStateOf<Set<BackupModule>>(emptySet()) }
+    var confirmQueue by remember { mutableStateOf<List<BackupModule>>(emptyList()) }
+    var stage by remember { mutableStateOf(BackupStage.NONE) }
+    var localCounts by remember { mutableStateOf<Map<BackupModule, Int?>>(emptyMap()) }
+
+    fun resetImport() {
+        importDoc = null
+        importSelected = emptySet()
+        confirmQueue = emptyList()
+        stage = BackupStage.NONE
+    }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val modules = exportModules
+        scope.launch {
+            val text = runCatching { viewModel.buildBackupText(modules) }.getOrNull()
+            if (text == null) {
+                onMessage("导出失败：读不到本机数据")
+                return@launch
+            }
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(text.toByteArray(Charsets.UTF_8))
+                    } ?: error("打不开目标文件")
+                }.isSuccess
+            }
+            onMessage(
+                if (ok) "已导出 ${modules.joinToString("、") { it.title }}"
+                else "导出失败：写不进所选文件"
+            )
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val text = withContext(Dispatchers.IO) {
+                runCatching {
+                    ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?.toString(Charsets.UTF_8)
+                }.getOrNull()
+            }
+            if (text == null) {
+                onMessage("读取不到所选文件")
+                return@launch
+            }
+            val parsed = runCatching { BackupDocument.parse(text) }
+            val doc = parsed.getOrNull()
+            if (doc == null) {
+                onMessage("导入失败：${parsed.exceptionOrNull()?.message ?: "文件格式不对"}")
+                return@launch
+            }
+            importDoc = doc
+            importSelected = doc.modules.keys
+            stage = BackupStage.PREVIEW
+        }
+    }
+
+    // 进预览时查一次本机条数，对话框里要显示「本机 X 条 → 文件 Y 条」
+    LaunchedEffect(importDoc) {
+        val doc = importDoc ?: return@LaunchedEffect
+        localCounts = doc.modules.keys.associateWith { viewModel.localCount(it) }
+    }
+
+    // 确认队列清空 = 每个勾选的模块都点头了 → 真正执行导入
+    LaunchedEffect(stage, confirmQueue) {
+        if (stage != BackupStage.CONFIRM || confirmQueue.isNotEmpty()) return@LaunchedEffect
+        val doc = importDoc ?: return@LaunchedEffect
+        val modules = importSelected
+        viewModel.importBackup(doc, modules) { message ->
+            // 设置是「读进 SharedPreferences」的，界面上的开关要重启才会重新读一遍 ——
+            // 与其做一个半吊子的即时刷新（主题还攥在 Activity 手里），不如把话说清楚
+            onMessage(
+                if (BackupModule.SETTINGS in modules) "$message（设置需重启应用后全部生效）"
+                else message
+            )
+        }
+        resetImport()
+    }
+
+    SettingsCard {
+        Text(
+            "把数据导出成一个 JSON 文件，或者从文件恢复。每个模块都能单独导出 / 导入，" +
+                "也可以一次全带走 —— 两种文件格式完全一样。",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = {
+                    exportModules = BackupModule.entries.toSet()
+                    exportLauncher.launch(backupFileName(null))
+                },
+                modifier = Modifier.weight(1f)
+            ) { Text("导出全部") }
+            Spacer(Modifier.width(10.dp))
+            OutlinedButton(
+                onClick = {
+                    runCatching {
+                        importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                    }.onFailure { onMessage("没有可用的文件选择器") }
+                },
+                modifier = Modifier.weight(1f)
+            ) { Text("从文件导入") }
+        }
+        Spacer(Modifier.height(14.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant)
+        )
+        Spacer(Modifier.height(4.dp))
+        // 三个模块各自一行：显示本机条数 + 单独导出
+        BackupModuleRow(
+            title = BackupModule.COURSES.title,
+            detail = "${classes.size} 条",
+            onExport = {
+                exportModules = setOf(BackupModule.COURSES)
+                exportLauncher.launch(backupFileName(BackupModule.COURSES))
+            }
+        )
+        BackupModuleRow(
+            title = BackupModule.NOTES.title,
+            detail = "${notes.size} 条",
+            onExport = {
+                exportModules = setOf(BackupModule.NOTES)
+                exportLauncher.launch(backupFileName(BackupModule.NOTES))
+            }
+        )
+        BackupModuleRow(
+            title = BackupModule.SETTINGS.title,
+            detail = "提醒 / 主题 / 周次",
+            onExport = {
+                exportModules = setOf(BackupModule.SETTINGS)
+                exportLauncher.launch(backupFileName(BackupModule.SETTINGS))
+            }
+        )
+    }
+
+    val doc = importDoc
+
+    // ── 预览：勾选要导入的模块 ──
+    if (stage == BackupStage.PREVIEW && doc != null) {
+        AlertDialog(
+            onDismissRequest = { resetImport() },
+            title = { Text("导入备份") },
+            text = {
+                Column {
+                    Text(
+                        "文件导出时间：${formatBackupTime(doc.exportedAt)}。勾选要导入的模块：",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    doc.modules.keys.forEach { module ->
+                        val checked = module in importSelected
+                        val fileCount = BackupCodec.countOf(module, doc.modules.getValue(module))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    importSelected = if (checked) importSelected - module
+                                    else importSelected + module
+                                }
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = { on ->
+                                    importSelected = if (on) importSelected + module
+                                    else importSelected - module
+                                }
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(module.title, fontSize = 14.sp)
+                                Text(
+                                    if (fileCount == null) "偏好设置"
+                                    else "本机 ${localCounts[module] ?: 0} 条 → 文件 $fileCount 条",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmQueue = BackupModule.entries.filter { it in importSelected }
+                        stage = BackupStage.CONFIRM
+                    },
+                    enabled = importSelected.isNotEmpty()
+                ) { Text("下一步") }
+            },
+            dismissButton = { TextButton(onClick = { resetImport() }) { Text("取消") } }
+        )
+    }
+
+    // ── 逐个确认覆盖：课表一次、便签一次、设置一次 ──
+    if (stage == BackupStage.CONFIRM) {
+        val current = confirmQueue.firstOrNull()
+        if (current != null && doc != null) {
+            val fileCount = BackupCodec.countOf(current, doc.modules.getValue(current))
+            AlertDialog(
+                onDismissRequest = { resetImport() },
+                title = { Text("覆盖「${current.title}」？") },
+                text = {
+                    Text(
+                        if (fileCount == null) {
+                            "本机的偏好设置将被文件里的设置整体替换。"
+                        } else {
+                            "本机现有的 ${localCounts[current] ?: 0} 条将被文件里的 $fileCount 条整体替换，" +
+                                "此操作不可撤销。"
+                        }
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { confirmQueue = confirmQueue.drop(1) }) { Text("确认覆盖") }
+                },
+                dismissButton = { TextButton(onClick = { resetImport() }) { Text("取消") } }
+            )
+        }
+    }
+}
+
+@Composable
+private fun BackupModuleRow(title: String, detail: String, onExport: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 14.sp)
+            Text(
+                detail,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+            )
+        }
+        TextButton(onClick = onExport) { Text("导出") }
+    }
+}
+
+/** 导出文件名：`StuMate-backup-all-20260930.json` / `StuMate-backup-courses-20260930.json` */
+private fun backupFileName(module: BackupModule?): String {
+    val date = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+    return "${BackupFormat.FILE_PREFIX}-${module?.key ?: "all"}-$date.json"
+}
+
+private fun formatBackupTime(millis: Long): String {
+    if (millis <= 0L) return "未知"
+    return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(millis))
 }
 
 @Composable

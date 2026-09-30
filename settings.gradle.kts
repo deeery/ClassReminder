@@ -6,6 +6,6 @@ pluginManagement {
     }
 }
 
-rootProject.name = "ClassReminder"
+rootProject.name = "StuMate-Android-Preview"
 include(":app")
 

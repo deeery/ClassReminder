@@ -1,8 +1,10 @@
-# ClassReminder — 项目长期记忆
+# StuMate（原 ClassReminder）— 项目长期记忆
 
 ## 项目概况
-Android 应用（Kotlin + Jetpack Compose + Room + Foreground Service），周课表 + 上课提醒。
-包名 `com.example.classreminder`，远程 `https://github.com/deeery/ClassReminder.git`。
+Android 应用（Kotlin + Jetpack Compose + Room + Foreground Service），周课表 + 便签 + 上课提醒。
+- **项目名已改为 `StuMate-Android-Preview`**（Gradle `rootProject.name`），启动器显示名 **StuMate**
+  （debug 变体 `StuMate-test`）。**包名 `com.example.classreminder` 与类名保持不动** —— 应用名和包名是两回事。
+- 包名 `com.example.classreminder`，远程 `https://github.com/deeery/ClassReminder.git`。
 
 ## 构建环境（必须离线）
 ```bash
@@ -25,6 +27,9 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 ## 设计规范
 - 主题在 `ui/Theme.kt`：`LightColors` / `DarkColors`，`ThemeMode` 三态（跟随系统/浅色/深色）。
+- **深色下「需要品牌蓝、但字号小」的地方用 `GoogleBlueLight`（`#8AB4F8`）** —— 主色 `#1A73E8`
+  对深色卡片只有 3.8:1，小字发闷；纯白又太素（用户原话「寡淡」）。命名色值收在 `Theme.kt`，别再各自硬编码。
+- 首屏问候语：**38sp / `FontWeight.Light` / lineHeight 46sp**（40sp 是上限，窄屏「早上好。」会折行）。
 - 浅深两套色**必须分别标定 α**：同一个 α 在深背景常失效（如 `onSurface` 与 `surface` 仅差 1.78:1）。
   深色下的描边 / 高亮一律走「主色 + 逐级透明度」，不要用灰。
 - 高亮分级收敛在 `HighlightSpec.of()`（`maxOf` 取最强档，不叠加）。
@@ -54,10 +59,10 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 ## 实机验证（adb）要点
 - **点击坐标必须先 `uiautomator dump` 读真实 `bounds` 取中心，不要按历史分辨率硬算。**
-  本机 AVD `Medium_Phone` 实际 `wm size` = **1272x2800，density 560**（早期记录 1080x2400 是另一台 AVD）。
-- 本机真实坐标（1272x2800）：底部导航「今天」(148,2662)、「课表」(473,2662)、「便签」(798,2662)、「设置」(1123,2662)。
-  对话框：「保存」(978,1537)、「取消」(715,1537)、分类第一行 y=1180 / 第二行 y=1315。
-  FAB `[1020,2120]-[1216,2316]` 中心 (1118,2218)。
+  本机 AVD `Medium_Phone` 实际 `wm size` = **1080x2400，density 420**（2026-09-30 实测）。
+  （更早记录过的 1272x2800 / 560 是**另一台** AVD，别再混用。）
+- 本机真实坐标（1080x2400）：底部导航「今天」(127,2275)、「课表」(402,2275)、「便签」(677,2275)、「设置」(952,2275)。
+  ⚠️ **点 y > 2400 会下拉通知栏**；BACK 关通知栏时有可能把应用一起退出（回到桌面）。
 - `uiautomator dump` 偶发失败（拉不到文件），重试一次即可。`adb pull` 需前缀 `MSYS_NO_PATHCONV=1`。
 - **双击**：`adb shell "input tap X Y; input tap X Y"` 两进程开销可能超 300ms 窗口 → 不成立。
   最稳路径是「单击选中 → 点左下角浮出的『编辑』按钮」（或直接改库造数据）。
@@ -81,6 +86,9 @@ export PATH="$JAVA_HOME/bin:$PATH"
   `C:/Users/Administrator/.workbuddy-ai/binaries/python/envs/default/Scripts/python.exe`，读 RGB 判定底纹/配色是否真的生效。
 
 ## 已知技巧
+- **★ kapt 把 KDoc 转成 Java stub 时，注释里的 `\uXXXX`（带反斜杠）会被 javac 当成 Unicode 转义解析**，
+  报「非法的 Unicode 转义」，而且报错指向 `app/build/tmp/kapt3/stubs/...` 的**生成文件**（不是源码，第一次看很容易懵）。
+  → KDoc 里提 unicode 转义要写 `U+XXXX`，不要带反斜杠。
 - **★ `LazyColumn` 的 content lambda 是 `LazyListScope`，不是 `@Composable`，里面不能调 `remember`。**
   写 `remember` 在 `items(...)` 之间会报 `@Composable invocations can only happen from the context of a @Composable function`。
   修法：把 `remember` 提到 `LazyColumn` **之外**，lambda 里只引用算好的值。
@@ -97,6 +105,14 @@ export PATH="$JAVA_HOME/bin:$PATH"
   （`notePalette()` 与课表底纹都走这一套，别引入第二套标准）。
 - **同一 α 在深浅两套主题下的感知强度不等价**：浅色是「深灰压白」、深色是「浅灰提黑」，
   后者天然更弱。需要观感对齐时，深色要**单独给一套略高的 α**（如斑马纹 0.03 → 0.06）。
+
+## 数据备份（模块化导入 / 导出）
+- `data/backup/MiniJson.kt`（自研极简 JSON，离线构建拉不到 Gson/Moshi）+ `data/backup/Backup.kt`（模块 / 文档 / 编解码）。
+- 模块：`BackupModule.COURSES / NOTES / SETTINGS`。**单模块导出与整体导出的文件格式完全一样**，
+  只差 `modules` 里有几个键 → 解析只有一条路径，不要写成两套。
+- 入口：`MainViewModel.buildBackupText / localCount / importBackup`；UI 在 `MainScreen.BackupSection`。
+- 导入策略：**逐模块确认覆盖**（课表一次、便签一次、设置一次），不做增量合并。
+- 设置模块只收用户偏好（不含 `first_run` / `last_tab`）；导入后需重启才全部生效。
 
 ## Git
 - 凭据 helper 路径（`~/.gitconfig` 里 `credential.helper` 为空，禁用了所有 helper）：

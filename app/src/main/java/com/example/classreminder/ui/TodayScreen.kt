@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.classreminder.data.ClassEntity
@@ -419,6 +420,7 @@ private fun UpcomingRow(
 ) {
     val scheme = MaterialTheme.colorScheme
     val isTemp = entry.entity.date.isNotEmpty()
+    val isDarkRow = scheme.surface.luminance() < 0.5f
 
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
@@ -431,12 +433,14 @@ private fun UpcomingRow(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 时间列：固定宽度，让所有行的时间左对齐成一条线
+            // 时间列：固定宽度，让所有行的时间左对齐成一条线。
+            // 深色下用**浅色 Google Blue**：主色 #1A73E8 压在深色卡片上只有 3.8:1、发闷；
+            // 纯白又太素（和右侧课程名同色，时间就不像「时间」了）。提亮版两者兼顾
             Text(
                 text = entry.entity.startTime,
                 fontSize = 14.sp,
                 fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-                color = scheme.primary,
+                color = if (isDarkRow) GoogleBlueLight else scheme.primary,
                 modifier = Modifier.width(46.dp)
             )
             Column(modifier = Modifier.weight(1f)) {

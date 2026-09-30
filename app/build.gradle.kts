@@ -16,7 +16,7 @@ android {
         versionCode = 1
         versionName = "1.0"
         // 应用名走占位符：debug 变体可以额外带 -test 后缀
-        manifestPlaceholders["appLabel"] = "ClassReminder"
+        manifestPlaceholders["appLabel"] = "StuMate"
     }
 
     buildTypes {
@@ -25,7 +25,7 @@ android {
             // 不会覆盖它的数据、设置和正在运行的 Service
             applicationIdSuffix = ".test"
             versionNameSuffix = "-test"
-            manifestPlaceholders["appLabel"] = "ClassReminder-test"
+            manifestPlaceholders["appLabel"] = "StuMate-test"
         }
     }
 

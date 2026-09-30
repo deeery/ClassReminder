@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StuMate v4.3 验收 · 深色主题与备份机制</title>
+<style>
+  :root{
+    /* 深色主题的语义色（与 ui/Theme.kt 的 DarkColors 一致） */
+    --surface:#1E1E1E;
+    --surface-variant:#2A2B2E;
+    --on-surface:#E8EAED;
+    --on-surface-variant:#9AA0A6;
+    --outline-variant:#3C4043;
+    --bg:#121212;
+
+    /* 主色：旧 = Google Blue 200（官方深色提亮版），新 = Google Blue 600 */
+    --primary-old:#8AB4F8;
+    --primary-new:#1A73E8;
+
+    --line:rgba(232,234,237,.13);   /* 横向网格线 */
+    --col-line:rgba(232,234,237,.09);/* 纵向列分隔 */
+    --zebra:rgba(232,234,237,.06);  /* 斑马纹 */
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:32px 24px 64px;
+    background:var(--bg); color:var(--on-surface);
+    font:14px/1.6 "Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  }
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-size:26px;font-weight:600;margin:0 0 6px}
+  .sub{color:var(--on-surface-variant);font-size:13px;margin-bottom:6px}
+  .meta{color:var(--on-surface-variant);font-size:12px;margin-bottom:34px}
+
+  section{margin-bottom:44px}
+  h2{font-size:17px;font-weight:600;margin:0 0 4px}
+  .note{color:var(--on-surface-variant);font-size:12.5px;margin:0 0 16px;max-width:900px}
+
+  .row{display:flex;gap:22px;flex-wrap:wrap}
+  .panel{flex:1 1 460px;min-width:420px}
+  .tag{
+    display:inline-block;font-size:11px;font-weight:600;letter-spacing:.4px;
+    padding:2px 9px;border-radius:999px;margin-bottom:9px;
+  }
+  .tag.before{background:rgba(242,139,130,.16);color:#F28B82}
+  .tag.after{background:rgba(129,201,149,.16);color:#81C995}
+
+  /* ── 课表-表格 ─────────────────────────────────────────── */
+  .tt{display:flex;background:var(--surface);border-radius:10px;overflow:hidden;border:1px solid var(--outline-variant)}
+  .tt-axis{width:46px;flex:none;padding-top:46px}
+  .tt-axis span{display:block;height:52px;font-size:10px;color:var(--on-surface-variant);text-align:right;padding-right:6px}
+  .tt-grid{display:flex;flex:1}
+  .col{flex:1;position:relative;border-left:1px solid var(--col-line)}
+  .col:first-child{border-left:none}
+  .ch{
+    height:46px;display:flex;align-items:center;justify-content:center;
+    font-size:11px;color:var(--on-surface-variant);border-bottom:1px solid var(--line);
+  }
+  .cb{
+    height:208px;position:relative;
+    background-image:
+      repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 52px),
+      repeating-linear-gradient(to bottom, var(--zebra) 0 52px, transparent 52px 104px);
+  }
+  .blk{
+    position:absolute;left:3px;right:3px;border-radius:6px;
+    background:var(--surface);border:1px solid rgba(138,180,248,.16);
+    padding:4px 5px;font-size:9.5px;line-height:1.35;color:var(--on-surface);
+    overflow:hidden;
+  }
+  .blk .t{font-weight:600;display:block;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
+  .blk .r{color:var(--on-surface-variant);display:block;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
+  .blk .bar{position:absolute;left:0;top:6px;bottom:6px;width:2px;border-radius:2px;background:rgba(138,180,248,.55)}
+  .blk.sel{border:1.5px solid var(--sel-edge);background-color:var(--sel-bg);box-shadow:0 0 0 3px var(--sel-glow)}
+  .blk.sel .bar{width:4px;background:var(--sel-bar)}
+
+  /* 高亮列：表头与列身共用同一个底色（源码里是同一组常量） */
+  .col.on .ch,.col.on .cb{background-color:var(--hl-tint)}
+  .col.on .ch{color:var(--hl-head)}
+  .col.on::before,.col.on::after{
+    content:"";position:absolute;top:0;bottom:0;width:1px;background:var(--hl-edge);
+  }
+  .col.on::before{left:0}
+  .col.on::after{right:0}
+  .col.today .ch{color:var(--hl-head)}
+  .col.today .cb{background-color:var(--today-base)}
+  .col.today .ch{background-color:var(--today-base)}
+
+  /* ── 改动前 ── */
+  .before-scope{
+    --hl-tint:rgba(138,180,248,.34);   /* 今日列选中底 0.34 */
+    --hl-edge:rgba(138,180,248,.30);
+    --hl-head:#8AB4F8;
+    --today-base:rgba(138,180,248,.07);
+    --sel-edge:rgba(138,180,248,.80);
+    --sel-bg:rgba(42,43,46,.22);
+    --sel-glow:rgba(138,180,248,.30);
+    --sel-bar:#8AB4F8;
+  }
+  /* ── 改动后 ── */
+  .after-scope{
+    --hl-tint:rgba(26,115,232,.22);    /* 今日列选中底 0.22 + 新主色 */
+    --hl-edge:rgba(26,115,232,.26);
+    --hl-head:#1A73E8;
+    --today-base:rgba(26,115,232,.05);
+    --sel-edge:rgba(26,115,232,.80);
+    --sel-bg:rgba(42,43,46,.15);
+    --sel-glow:rgba(26,115,232,.24);
+    --sel-bar:#1A73E8;
+  }
+  /* 非今日列（手动点列头高亮）：改动前后只差 α */
+  .before-scope .col.other.on{--hl-tint:rgba(42,43,46,.85);--hl-edge:rgba(42,43,46,.55)}
+  .after-scope  .col.other.on{--hl-tint:rgba(42,43,46,.52);--hl-edge:rgba(42,43,46,.42)}
+
+  /* ── 主色对照 ── */
+  .swatch-row{display:flex;gap:22px;flex-wrap:wrap}
+  .swatch{flex:1 1 300px;border:1px solid var(--outline-variant);border-radius:10px;overflow:hidden;background:var(--surface)}
+  .swatch .head{padding:12px 14px;font-size:12px;color:var(--on-surface-variant);border-bottom:1px solid var(--outline-variant)}
+  .swatch .body{padding:16px 14px;display:flex;flex-direction:column;gap:12px}
+  .pill{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--on-surface-variant)}
+  .dot{width:34px;height:34px;border-radius:8px;flex:none}
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;
+    height:38px;padding:0 18px;border-radius:19px;font-size:13px;font-weight:600;
+    align-self:flex-start;
+  }
+  .kv{font-size:12px;color:var(--on-surface-variant);line-height:1.9}
+  .kv b{color:var(--on-surface);font-weight:600}
+  code{background:rgba(232,234,237,.08);padding:1px 5px;border-radius:4px;font-size:11.5px}
+
+  /* ── 数据备份卡片 ── */
+  .card{
+    background:rgba(42,43,46,.55);border:1px solid var(--outline-variant);
+    border-radius:12px;padding:16px;max-width:520px;
+  }
+  .card .desc{font-size:12px;color:rgba(232,234,237,.6);margin-bottom:12px;line-height:1.65}
+  .btns{display:flex;gap:10px}
+  .b-primary{
+    flex:1;height:40px;border-radius:8px;background:var(--primary-new);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;
+  }
+  .b-outline{
+    flex:1;height:40px;border-radius:8px;border:1px solid var(--outline-variant);color:var(--on-surface);
+    display:flex;align-items:center;justify-content:center;font-size:13px;
+  }
+  .hr{height:1px;background:var(--outline-variant);margin:14px 0 6px}
+  .mrow{display:flex;align-items:center;padding:6px 0}
+  .mrow .l{flex:1}
+  .mrow .l .n{font-size:13.5px}
+  .mrow .l .d{font-size:11px;color:rgba(232,234,237,.55)}
+  .mrow .go{font-size:13px;color:var(--primary-new);font-weight:600;padding:6px 10px}
+
+  /* ── 对话框示意 ── */
+  .dlg{
+    max-width:520px;background:#2B2B2E;border-radius:24px;padding:22px 22px 14px;
+    border:1px solid var(--outline-variant);
+  }
+  .dlg h3{margin:0 0 12px;font-size:17px;font-weight:600}
+  .dlg .body{font-size:13px;color:rgba(232,234,237,.75);line-height:1.7}
+  .ck{display:flex;align-items:center;gap:9px;padding:5px 0}
+  .ck .box{width:17px;height:17px;border-radius:3px;background:var(--primary-new);position:relative;flex:none}
+  .ck .box::after{content:"";position:absolute;left:5.5px;top:2.5px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+  .ck .txt{font-size:13.5px}
+  .ck .cnt{font-size:11px;color:var(--on-surface-variant);display:block}
+  .dlg .actions{display:flex;justify-content:flex-end;gap:6px;margin-top:14px}
+  .dlg .actions span{font-size:13.5px;font-weight:600;color:var(--primary-new);padding:8px 12px}
+
+  table{border-collapse:collapse;font-size:12.5px;width:100%;max-width:900px}
+  th,td{border-bottom:1px solid var(--outline-variant);padding:7px 10px;text-align:left}
+  th{color:var(--on-surface-variant);font-weight:600}
+  td code{font-size:11px}
+  .delta{color:#81C995;font-weight:600}
+
+  .shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:16px;max-width:1100px}
+  .shots figure{margin:0}
+  .shots img{width:100%;border-radius:10px;border:1px solid var(--outline-variant);display:block}
+  .shots figcaption{font-size:11.5px;color:var(--on-surface-variant);margin-top:7px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>StuMate v4.3 验收</h1>
+  <div class="sub">深色主题统一 Google Blue 600 · 课表高亮调淡 · 模块化备份 · 项目改名 StuMate-Android-Preview</div>
+  <div class="meta">并排对照页 · 所有数值与 <code>ui/MainScreen.kt</code> / <code>ui/Theme.kt</code> 里的常量逐一对应 · 仅深色主题受影响，浅色主题未改动</div>
+
+  <!-- ① 课表高亮 -->
+  <section>
+    <h2>① 深色课表-表格：列高亮强度</h2>
+    <p class="note">
+      左「改动前」、右「改动后」。周三 = 今天（主色高亮），周五 = 手动点列头高亮（中性灰），
+      周一的课块是「选中」态。深色下原来的非今日列 α0.85 几乎铺成一块实心色，
+      把课程块压了下去；这一版整体调淡，同时今日列的主色换成深色 Google Blue。
+    </p>
+    <div class="row">
+
+      <div class="panel before-scope">
+        <div class="tag before">改动前</div>
+        <div class="tt">
+          <div class="tt-axis"><span>08:00</span><span>09:00</span><span>10:00</span><span>11:00</span></div>
+          <div class="tt-grid">
+            <div class="col">
+              <div class="ch">周一</div>
+              <div class="cb">
+                <div class="blk sel" style="top:6px;height:66px">
+                  <div class="bar"></div>
+                  <span class="t">高等数学</span><span class="r">教二 305</span>
+                </div>
+                <div class="blk" style="top:110px;height:88px">
+                  <div class="bar"></div>
+                  <span class="t">线性代数</span><span class="r">教三 201</span>
+                </div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="ch">周二</div>
+              <div class="cb">
+                <div class="blk" style="top:58px;height:66px">
+                  <div class="bar"></div>
+                  <span class="t">大学英语</span><span class="r">外语楼 401</span>
+                </div>
+              </div>
+            </div>
+            <div class="col today on">
+              <div class="ch">周三</div>
+              <div class="cb">
+                <div class="blk" style="top:6px;height:88px">
+                  <div class="bar"></div>
+                  <span class="t">数据结构</span><span class="r">机房 A</span>
+                </div>
+                <div class="blk" style="top:136px;height:62px">
+                  <div class="bar"></div>
+                  <span class="t">体育</span><span class="r">操场</span>
+                </div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="ch">周四</div>
+              <div class="cb">
+                <div class="blk" style="top:110px;height:88px">
+                  <div class="bar"></div>
+                  <span class="t">大学物理</span><span class="r">理教 102</span>
+                </div>
+              </div>
+            </div>
+            <div class="col other on">
+              <div class="ch">周五</div>
+              <div class="cb">
+                <div class="blk" style="top:6px;height:62px">
+                  <div class="bar"></div>
+                  <span class="t">程序设计</span><span class="r">机房 B</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel after-scope">
+        <div class="tag after">改动后</div>
+        <div class="tt">
+          <div class="tt-axis"><span>08:00</span><span>09:00</span><span>10:00</span><span>11:00</span></div>
+          <div class="tt-grid">
+            <div class="col">
+              <div class="ch">周一</div>
+              <div class="cb">
+                <div class="blk sel" style="top:6px;height:66px">
+                  <div class="bar"></div>
+                  <span class="t">高等数学</span><span class="r">教二 305</span>
+                </div>
+                <div class="blk" style="top:110px;height:88px">
+                  <div class="bar"></div>
+                  <span class="t">线性代数</span><span class="r">教三 201</span>
+                </div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="ch">周二</div>
+              <div class="cb">
+                <div class="blk" style="top:58px;height:66px">
+                  <div class="bar"></div>
+                  <span class="t">大学英语</span><span class="r">外语楼 401</span>
+                </div>
+              </div>
+            </div>
+            <div class="col today on">
+              <div class="ch">周三</div>
+              <div class="cb">
+                <div class="blk" style="top:6px;height:88px">
+                  <div class="bar"></div>
+                  <span class="t">数据结构</span><span class="r">机房 A</span>
+                </div>
+                <div class="blk" style="top:136px;height:62px">
+                  <div class="bar"></div>
+                  <span class="t">体育</span><span class="r">操场</span>
+                </div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="ch">周四</div>
+              <div class="cb">
+                <div class="blk" style="top:110px;height:88px">
+                  <div class="bar"></div>
+                  <span class="t">大学物理</span><span class="r">理教 102</span>
+                </div>
+              </div>
+            </div>
+            <div class="col other on">
+              <div class="ch">周五</div>
+              <div class="cb">
+                <div class="blk" style="top:6px;height:62px">
+                  <div class="bar"></div>
+                  <span class="t">程序设计</span><span class="r">机房 B</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ② 主色 -->
+  <section>
+    <h2>② 深色主题主色：Google Blue 200 → Google Blue 600</h2>
+    <p class="note">
+      原来深色走 Google 官方深色那套提亮版 <code>#8AB4F8</code>，与浅色的 <code>#1A73E8</code> 不是同一支蓝。
+      现在深浅统一用 <code>#1A73E8</code>。代价是对比度下降，所以主色只用于高亮块、图标、按钮底、色条，不用来写正文。
+    </p>
+    <div class="swatch-row">
+      <div class="swatch">
+        <div class="head">改动前 · <code>#8AB4F8</code>（Google Blue 200）</div>
+        <div class="body">
+          <div class="pill"><span class="dot" style="background:#8AB4F8"></span>主色块</div>
+          <div class="btn" style="background:#8AB4F8;color:#0D2D62">按钮文字（onPrimary 深蓝）</div>
+          <div class="kv">
+            对 <code>#121212</code> 对比度 <b>7.4 : 1</b><br>
+            对卡片 <code>#1E1E1E</code> <b>7.0 : 1</b><br>
+            小字正文 <b>达标</b>（≥ 4.5 : 1）
+          </div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="head">改动后 · <code>#1A73E8</code>（Google Blue 600）</div>
+        <div class="body">
+          <div class="pill"><span class="dot" style="background:#1A73E8"></span>主色块</div>
+          <div class="btn" style="background:#1A73E8;color:#fff">按钮文字（onPrimary 白）</div>
+          <div class="kv">
+            对 <code>#121212</code> 对比度 <b>4.2 : 1</b><br>
+            对卡片 <code>#1E1E1E</code> <b>3.8 : 1</b><br>
+            小字正文 <b style="color:#F28B82">不达标</b>（大标题 / 图标 / 色块仍达标）
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ③ 数据备份 -->
+  <section>
+    <h2>③ 数据备份：模块化导入 / 导出</h2>
+    <p class="note">
+      设置页新增区块。三个模块各自独立：能单独导出，也能整体导出；导入时逐模块勾选，且每个模块都要单独确认一次覆盖。
+    </p>
+    <div class="row">
+      <div class="panel">
+        <div class="tag after">设置页 · 数据备份</div>
+        <div class="card">
+          <div class="desc">把数据导出成一个 JSON 文件，或者从文件恢复。每个模块都能单独导出 / 导入，也可以一次全带走 —— 两种文件格式完全一样。</div>
+          <div class="btns">
+            <div class="b-primary">导出全部</div>
+            <div class="b-outline">从文件导入</div>
+          </div>
+          <div class="hr"></div>
+          <div class="mrow"><div class="l"><div class="n">课程表</div><div class="d">12 条</div></div><div class="go">导出</div></div>
+          <div class="mrow"><div class="l"><div class="n">便签</div><div class="d">7 条</div></div><div class="go">导出</div></div>
+          <div class="mrow"><div class="l"><div class="n">设置</div><div class="d">提醒 / 主题 / 周次</div></div><div class="go">导出</div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="tag after">导入预览 → 逐个确认覆盖</div>
+        <div class="dlg">
+          <h3>导入备份</h3>
+          <div class="body">
+            文件导出时间：2026-09-30 11:20。勾选要导入的模块：
+            <div style="margin-top:8px">
+              <div class="ck"><span class="box"></span><span class="txt">课程表<span class="cnt">本机 12 条 → 文件 8 条</span></span></div>
+              <div class="ck"><span class="box"></span><span class="txt">便签<span class="cnt">本机 7 条 → 文件 5 条</span></span></div>
+              <div class="ck"><span class="box" style="background:#1E1E1E;border:2px solid #5F6368"></span><span class="txt">设置<span class="cnt">偏好设置</span></span></div>
+            </div>
+          </div>
+          <div class="actions"><span style="color:#9AA0A6">取消</span><span>下一步</span></div>
+        </div>
+        <div class="dlg" style="margin-top:16px">
+          <h3>覆盖「课程表」？</h3>
+          <div class="body">本机现有的 12 条将被文件里的 8 条整体替换，此操作不可撤销。</div>
+          <div class="actions"><span style="color:#9AA0A6">取消</span><span>确认覆盖</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ④ 实机验证 -->
+  <section>
+    <h2>④ 实机验证（Medium_Phone · 1080×2400 · 系统深色）</h2>
+    <p class="note">
+      像素采样与上面的常量逐一吻合：今日列描边 <code>rgb(20,39,65)</code> = <code>#1A73E8</code> α0.22 叠在 <code>#121212</code> 上
+      （若还是旧值，应是 <code>rgb(59,73,96)</code>）；非今日列 <code>rgb(31,31,33)</code> = <code>surfaceVariant</code> α0.52
+      （旧 α0.85 会是 <code>rgb(38,39,42)</code>）。点列头能正常切换高亮，边缘描边随之出现 / 消失。
+    </p>
+    <div class="shots">
+      <figure><img src="v30_01_launch.png" alt="今天页"><figcaption>今天页 · 主卡与 FAB 已是 <code>#1A73E8</code></figcaption></figure>
+      <figure><img src="v30_02_week.png" alt="课表-表格"><figcaption>课表-表格 · 今天列（周三）只有常态弱底 α0.05</figcaption></figure>
+      <figure><img src="v30_03_highlight_thu.png" alt="周四列高亮"><figcaption>点列头高亮周四 · 非今日列 α0.52</figcaption></figure>
+      <figure><img src="v30_06_settings.png" alt="数据备份"><figcaption>设置页 · 数据备份区块</figcaption></figure>
+      <figure><img src="v30_10_preview.png" alt="导入预览"><figcaption>导入预览 · 逐模块勾选 + 条数对照</figcaption></figure>
+      <figure><img src="v30_11_confirm1.png" alt="确认覆盖课表"><figcaption>覆盖确认 ① 课程表</figcaption></figure>
+      <figure><img src="v30_12_confirm2.png" alt="确认覆盖便签"><figcaption>覆盖确认 ② 便签</figcaption></figure>
+      <figure><img src="v30_14_done.png" alt="导入完成"><figcaption>导入完成 · 提示设置需重启生效</figcaption></figure>
+    </div>
+  </section>
+
+  <!-- 常量对照 -->
+  <section>
+    <h2>附：源码常量对照</h2>
+    <table>
+      <thead>
+        <tr><th>位置</th><th>浅色</th><th>深色 旧 → 新</th><th>常量名</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>今日列选中底</td><td>0.14</td><td>0.34 → <span class="delta">0.22</span></td><td><code>TINT_ALPHA_TODAY_*</code></td></tr>
+        <tr><td>非今日列选中底</td><td>0.75</td><td>0.85 → <span class="delta">0.52</span></td><td><code>TINT_ALPHA_OTHER_*</code></td></tr>
+        <tr><td>今日列常态弱底</td><td>0.035</td><td>0.07 → <span class="delta">0.05</span></td><td><code>TODAY_BASE_TINT_*</code></td></tr>
+        <tr><td>悬停整列</td><td>0.022</td><td>0.05 → <span class="delta">0.04</span></td><td><code>HOVER_TINT_ALPHA_*</code></td></tr>
+        <tr><td>列描边（今日 / 非今日）</td><td>0.30 / 0.55</td><td>→ <span class="delta">0.26 / 0.42</span></td><td><code>EDGE_ALPHA_TODAY</code> / <code>_OTHER</code></td></tr>
+        <tr><td>课程块选中底</td><td>0.12</td><td>0.22 → <span class="delta">0.15</span></td><td>（GridCell 内联）</td></tr>
+        <tr><td>课程块选中光晕</td><td>0.17</td><td>0.30 → <span class="delta">0.24</span></td><td>（GridCell 内联）</td></tr>
+        <tr><td>深色主色</td><td>#1A73E8</td><td>#8AB4F8 → <span class="delta">#1A73E8</span></td><td><code>DarkColors.primary</code></td></tr>
+      </tbody>
+    </table>
+    <p class="note" style="margin-top:14px">
+      表头与列身共用同一组常量（<code>MainScreen.kt</code> 顶部），改一处两边同时生效 ——
+      原来两边各自硬编码，改一处漏一处就会出现「表头和列身深浅对不上、整列头重脚轻」。
+    </p>
+  </section>
+
+</div>
+</body>
+</html>

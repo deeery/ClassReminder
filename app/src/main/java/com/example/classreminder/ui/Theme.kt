@@ -21,8 +21,12 @@ enum class ThemeMode(val label: String) {
 // 这一版把主色从原来的 #1565C0 换成 Google 官方应用的基准蓝 #1A73E8
 // （Calendar / Gmail / Drive 都在用的那一支），并补齐 M3 的全部语义角色。
 //
-// 深色下的主色不用 #1A73E8 原色 —— 它对 #121212 只有 3.1:1，达不到 AA 的白字要求。
-// Google 官方深色用的是提亮版 #8AB4F8（对比度 7.4:1），这里照搬。
+// 深色下的主色**也用 #1A73E8**（和浅色同一个 Google Blue 600），不再走 Google 官方深色那套
+// 提亮版 #8AB4F8 —— 深浅两套用同一个品牌蓝，高亮色才不会「一进深色就换了支蓝」。
+//
+// 代价要清楚：#1A73E8 对 #121212 是 4.2:1、对卡片 #1E1E1E 是 3.8:1，
+// **小字号正文达不到 AA 的 4.5:1**（大标题 / 图标 / 色块仍达标）。
+// 所以主色只承担「高亮块、图标、按钮底、色条」这类角色，不用来写正文。
 //
 // 中性色走 Google 的 Gray 灰阶（#F8F9FA / #5F6368 这一族），
 // 比 Material 默认的紫灰更冷、更接近 Google 应用的实际观感。
@@ -55,8 +59,8 @@ private val LightColors = lightColorScheme(
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF8AB4F8),              // Google Blue 200 — 深色专用的提亮版
-    onPrimary = Color(0xFF0D2D62),
+    primary = Color(0xFF1A73E8),              // Google Blue 600 — 与浅色同色
+    onPrimary = Color.White,                  // 主色变深后，压在它上面的字/图标必须是白的
     primaryContainer = Color(0xFF1A3D7C),     // 深色下的选中底
     onPrimaryContainer = Color(0xFFD3E3FD),
     secondary = Color(0xFFFDD663),            // Google Yellow 200
@@ -104,7 +108,7 @@ private val NotePaletteLight = listOf(
 
 /** 调色盘色号 → 深色主题下的颜色 */
 private val NotePaletteDark = listOf(
-    Color(0xFF8AB4F8),   // 0 Google Blue  200（= 深色主题主色）
+    Color(0xFF8AB4F8),   // 0 Google Blue  200（调色盘统一走 200 档，深底上才够亮）
     Color(0xFF4DD0E1),   // 1 Cyan         300
     Color(0xFF81C995),   // 2 Google Green 200
     Color(0xFFFDD663),   // 3 Google Yellow 200
@@ -113,6 +117,16 @@ private val NotePaletteDark = listOf(
     Color(0xFFD7AEFB),   // 6 Purple       200
     Color(0xFF9AA0A6)    // 7 Google Gray  500
 )
+
+/**
+ * 深色下的「浅色 Google Blue」（提亮版）。
+ *
+ * 深色主色是 `#1A73E8`（与浅色同色），但它对深色卡片只有 3.8:1 —— 做**小字号文字**
+ * 会发闷，纯白又太素（和正文同色，时间就不再像「时间」了）。
+ * 这个提亮版专供深色下的小字：保住品牌蓝，亮度也够。
+ * 浅色主题不用它（浅底上用主色 `#1A73E8` 就对了）。
+ */
+val GoogleBlueLight = Color(0xFF8AB4F8)
 
 /**
  * 取便签调色盘里的颜色。[index] 越界时收敛到 0，避免脏数据把 UI 打挂

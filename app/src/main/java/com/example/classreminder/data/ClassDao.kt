@@ -13,5 +13,9 @@ interface ClassDao {
 
     @Delete
     suspend fun delete(entity: ClassEntity)
+
+    /** 覆盖导入用：清空整表再写入备份里的课程 */
+    @Query("DELETE FROM classes")
+    suspend fun deleteAll()
 }
 

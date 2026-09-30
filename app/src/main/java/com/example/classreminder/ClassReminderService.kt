@@ -42,7 +42,7 @@ class ClassReminderService : Service() {
      */
     private val notifChannelId = "class_reminder_alerts_v2"
     private val legacyAlertChannelId = "class_reminder_alerts"
-    /** 跟启动器标签保持一致（debug 变体是 ClassReminder-test），两个应用同时装时才分得清 */
+    /** 跟启动器标签保持一致（debug 变体是 StuMate-test），两个应用同时装时才分得清 */
     private val appLabel: String by lazy { applicationInfo.loadLabel(packageManager).toString() }
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
     private var future: ScheduledFuture<*>? = null
@@ -104,7 +104,7 @@ class ClassReminderService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
 
-            val svc = NotificationChannel(channelId, "ClassReminder Service", NotificationManager.IMPORTANCE_LOW)
+            val svc = NotificationChannel(channelId, "StuMate 服务", NotificationManager.IMPORTANCE_LOW)
             nm.createNotificationChannel(svc)
 
             val alerts = NotificationChannel(notifChannelId, "上课提醒", NotificationManager.IMPORTANCE_HIGH)

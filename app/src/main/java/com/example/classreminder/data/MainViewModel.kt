@@ -4,6 +4,13 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.classreminder.Prefs
+import com.example.classreminder.data.backup.BackupCodec
+import com.example.classreminder.data.backup.BackupDocument
+import com.example.classreminder.data.backup.BackupFormat
+import com.example.classreminder.data.backup.BackupModule
+import com.example.classreminder.data.backup.JsonValue
+import com.example.classreminder.data.backup.SettingsSnapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -296,6 +303,118 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         var id = (System.currentTimeMillis() % Int.MAX_VALUE).toInt()
         while (id in taken) id++
         return id
+    }
+
+    // ── 备份：模块化导入 / 导出 ──────────────────────────────────────
+    //
+    // 导出与导入共用同一份「模块」定义（BackupModule）：传一个模块就是单独导出 / 导入
+    // 那一块，传全部就是整体 —— 两种产出的**文件格式完全一样**，
+    // 所以不存在「整体」和「单模块」两套代码，解析路径只有一条。
+
+    /**
+     * 生成备份文本。
+     *
+     * 空模块集合会产出一份没有任何 modules 的文件、解析时会被拒 ——
+     * 所以 UI 那边保证不会用空集合调进来。
+     */
+    suspend fun buildBackupText(modules: Set<BackupModule>): String = withContext(Dispatchers.IO) {
+        val payload = LinkedHashMap<BackupModule, JsonValue>()
+        if (BackupModule.COURSES in modules) {
+            payload[BackupModule.COURSES] = BackupCodec.encodeCourses(dao.getAll())
+        }
+        if (BackupModule.NOTES in modules) {
+            payload[BackupModule.NOTES] = BackupCodec.encodeNotes(noteDao.getAll())
+        }
+        if (BackupModule.SETTINGS in modules) {
+            payload[BackupModule.SETTINGS] = BackupCodec.encodeSettings(readSettings())
+        }
+        BackupDocument(
+            schema = BackupFormat.SCHEMA,
+            app = BackupFormat.APP_NAME,
+            exportedAt = System.currentTimeMillis(),
+            modules = payload
+        ).toJson()
+    }
+
+    /**
+     * 本机某个模块当前的条数，给导入对话框显示「本机 X 条 → 文件 Y 条」。
+     * 设置模块没有条数概念，返回 null。
+     */
+    suspend fun localCount(module: BackupModule): Int? = withContext(Dispatchers.IO) {
+        when (module) {
+            BackupModule.COURSES -> dao.getAll().size
+            BackupModule.NOTES -> noteDao.getAll().size
+            BackupModule.SETTINGS -> null
+        }
+    }
+
+    /**
+     * 应用一份备份。[modules] 是用户勾选、并且**已经逐个确认过要覆盖**的模块。
+     *
+     * 每个模块都是整体替换（先清空再写入），不做增量合并 —— 这正是
+     * 「覆盖前逐个确认」要保护的那件事，所以这里不再二次询问。
+     */
+    fun importBackup(document: BackupDocument, modules: Set<BackupModule>, onDone: (String) -> Unit) {
+        viewModelScope.launch {
+            val message = try {
+                withContext(Dispatchers.IO) {
+                    if (BackupModule.COURSES in modules) {
+                        document.modules[BackupModule.COURSES]?.let { value ->
+                            val incoming = BackupCodec.decodeCourses(value)
+                            dao.deleteAll()
+                            incoming.forEach { dao.insert(it) }
+                        }
+                    }
+                    if (BackupModule.NOTES in modules) {
+                        document.modules[BackupModule.NOTES]?.let { value ->
+                            val incoming = BackupCodec.decodeNotes(value)
+                            // 整体替换：清空 + 写回（和「回撤」同一条路径）。
+                            // 顺手清掉回撤栈 —— 撤回到导入前的数据会让人以为导入没生效
+                            noteDao.deleteAll()
+                            if (incoming.isNotEmpty()) noteDao.insertAll(incoming)
+                            undoStack.clear()
+                            _canUndo.value = false
+                        }
+                    }
+                    if (BackupModule.SETTINGS in modules) {
+                        document.modules[BackupModule.SETTINGS]?.let { value ->
+                            writeSettings(BackupCodec.decodeSettings(value))
+                        }
+                    }
+                    _classes.value = dao.getAll()
+                    _notes.value = noteDao.getAll()
+                }
+                "已导入：" + modules.joinToString("、") { it.title }
+            } catch (t: Throwable) {
+                t.printStackTrace()
+                "导入失败：${t.message ?: t.javaClass.simpleName}"
+            }
+            onDone(message)
+        }
+    }
+
+    private fun readSettings(): SettingsSnapshot {
+        val ctx = getApplication<Application>()
+        return SettingsSnapshot(
+            advanceMinutes = Prefs.getAdvanceMinutes(ctx),
+            autoStart = Prefs.getAutoStart(ctx),
+            showPopup = Prefs.getShowPopup(ctx),
+            themeMode = Prefs.getThemeMode(ctx),
+            week1Monday = Prefs.getWeek1Monday(ctx),
+            weekGrid = Prefs.isWeekGrid(ctx),
+            experimentalGrid = Prefs.isExperimentalGrid(ctx)
+        )
+    }
+
+    private fun writeSettings(snapshot: SettingsSnapshot) {
+        val ctx = getApplication<Application>()
+        Prefs.setAdvanceMinutes(ctx, snapshot.advanceMinutes)
+        Prefs.setAutoStart(ctx, snapshot.autoStart)
+        Prefs.setShowPopup(ctx, snapshot.showPopup)
+        Prefs.setThemeMode(ctx, snapshot.themeMode)
+        Prefs.setWeek1Monday(ctx, snapshot.week1Monday)
+        Prefs.setWeekGrid(ctx, snapshot.weekGrid)
+        Prefs.setExperimentalGrid(ctx, snapshot.experimentalGrid)
     }
 
     companion object {
