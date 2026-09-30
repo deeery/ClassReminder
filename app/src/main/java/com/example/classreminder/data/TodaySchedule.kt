@@ -86,6 +86,29 @@ object TodaySchedule {
     fun remaining(today: List<TodayClass>, now: Long): List<TodayClass> =
         today.filter { it.remainingAt(now) }
 
+    /**
+     * 「此刻是否空闲」——这是「今天」页主卡的三种状态之一，单独抽出来是为了能单测。
+     *
+     * 判定口径直接对齐设置里那个**提前提醒窗口**：[advanceMinutes] 的语义本来就是
+     * 「离上课还有 N 分钟就该提示我了」。所以「还没进预警窗」就等于「现在确实还闲着」。
+     *
+     * 三个必要条件，缺一不可：
+     *  1. 现在没有课正在进行（有课就是「正在上课」，不该说空闲）
+     *  2. 今天还有没上完的课（全上完了是另一种状态，走「今天的课上完了」）
+     *  3. 离最近那节还没开始的课，间隔 **严格大于** 预警窗口
+     *
+     * 边界取严格大于：正好剩 30 分钟而预警也是 30 分钟时，应该已经开始提示了，
+     * 不该同时说「空闲」—— 那和提醒业务是矛盾的。
+     *
+     * @param upcoming 今天还没结束的课（升序）。传 [remaining] 的结果即可。
+     */
+    fun isIdle(upcoming: List<TodayClass>, now: Long, advanceMinutes: Int): Boolean {
+        if (upcoming.any { it.ongoingAt(now) }) return false
+        val next = upcoming.firstOrNull { it.startMillis > now } ?: return false
+        val window = advanceMinutes.coerceAtLeast(0).toLong() * 60_000L
+        return (next.startMillis - now) > window
+    }
+
     private fun toTodayClass(entity: ClassEntity, now: Long): TodayClass? {
         val startMinutes = minutesOf(entity.startTime) ?: return null
         val endMinutes = minutesOf(entity.endTime) ?: return null

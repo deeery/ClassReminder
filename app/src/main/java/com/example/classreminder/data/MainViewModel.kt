@@ -155,10 +155,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      *
      * 插到中间后把 position 整体重写成 0..n-1，而不是取前后中点——反复往同一条上方插，
      * 中点法几次就把整数空间耗光，重写则永远有位置可用（便签量很小，这点代价可以忽略）。
+     *
+     * [typeIndex] / [customLabel] / [deadlineAt] 见 [NoteEntity]：这三个是「分类」相关字段，
+     * 统一用 [sanitizeType] 归一，避免 UI 传进来越界下标或「非 Deadline 却带着时刻」这类脏组合。
      */
-    fun addNote(text: String, aboveNoteId: Int? = null, colorIndex: Int = DEFAULT_NOTE_COLOR) {
+    fun addNote(
+        text: String,
+        aboveNoteId: Int? = null,
+        colorIndex: Int = DEFAULT_NOTE_COLOR,
+        typeIndex: Int = NOTE_TYPE_NONE,
+        customLabel: String = "",
+        deadlineAt: Long = 0L
+    ) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
+        val type = sanitizeType(typeIndex, customLabel, deadlineAt)
         mutateNotes {
             val current = noteDao.getAll()
             val anchor = aboveNoteId?.let { id -> current.indexOfFirst { it.id == id } } ?: -1
@@ -168,7 +179,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 text = trimmed,
                 position = insertIndex,
                 createdAt = System.currentTimeMillis(),
-                colorIndex = colorIndex.coerceIn(0, NOTE_COLOR_COUNT - 1)
+                colorIndex = colorIndex.coerceIn(0, NOTE_COLOR_COUNT - 1),
+                typeIndex = type.first,
+                customLabel = type.second,
+                deadlineAt = type.third
             )
             // 先落库：下面的 updateAll 只更新已存在的行，新行必须先存在
             noteDao.insert(fresh)
@@ -178,22 +192,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * 改便签的文字和颜色，顺序不动。
+     * 改便签的文字、颜色与分类，顺序不动。
      *
-     * 文字为空时**只改颜色**、保留原文 —— 用户可能只想换个色号，
+     * 文字为空时**只改颜色 / 分类**、保留原文 —— 用户可能只想换个色号或挂个标签，
      * 不该因为输入框被清空就丢掉内容（保存按钮的 enabled 也按这个语义来）。
      */
-    fun updateNote(id: Int, text: String, colorIndex: Int) {
+    fun updateNote(
+        id: Int,
+        text: String,
+        colorIndex: Int,
+        typeIndex: Int = NOTE_TYPE_NONE,
+        customLabel: String = "",
+        deadlineAt: Long = 0L
+    ) {
         val trimmed = text.trim()
         val color = colorIndex.coerceIn(0, NOTE_COLOR_COUNT - 1)
+        val type = sanitizeType(typeIndex, customLabel, deadlineAt)
         val before = _notes.value.firstOrNull { it.id == id } ?: return
-        // 内容和颜色都没变就别占一格回撤
+        // 内容和颜色/分类都没变就别占一格回撤
         val nextText = trimmed.ifEmpty { before.text }
-        if (before.text == nextText && before.colorIndex == color) return
+        if (before.text == nextText && before.colorIndex == color &&
+            before.typeIndex == type.first && before.customLabel == type.second &&
+            before.deadlineAt == type.third
+        ) return
         mutateNotes {
             val current = noteDao.getById(id) ?: return@mutateNotes
-            noteDao.insert(current.copy(text = nextText, colorIndex = color))
+            noteDao.insert(
+                current.copy(
+                    text = nextText,
+                    colorIndex = color,
+                    typeIndex = type.first,
+                    customLabel = type.second,
+                    deadlineAt = type.third
+                )
+            )
         }
+    }
+
+    /**
+     * 归一「分类」三兄弟，去处三种脏组合：
+     *  - 下标越界 → 收敛到合法范围
+     *  - 自定义类没填名字 → 存空串（显示时回落到占位示例，不必往库里塞「自定义」三个字）
+     *  - 非 Deadline 类却带着时刻 → 时刻清零。否则用户从 Deadline 切回「工作」后，
+     *    库里的旧时刻还在，下次再切回 Deadline 会「凭空冒出」一个早就过期的时间。
+     */
+    private fun sanitizeType(typeIndex: Int, customLabel: String, deadlineAt: Long): Triple<Int, String, Long> {
+        val index = typeIndex.coerceIn(0, NOTE_TYPES.lastIndex)
+        val type = noteTypeAt(index)
+        val label = if (type.editableLabel) customLabel.trim() else ""
+        val deadline = if (type.kind == NoteTypeKind.DEADLINE) deadlineAt.coerceAtLeast(0L) else 0L
+        return Triple(index, label, deadline)
     }
 
     /** 只换色号。竖条即时预览之外，若单独调用也走这里 */

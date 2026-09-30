@@ -144,4 +144,53 @@ class TodayScheduleTest {
         assertEquals("Tuesday", TodaySchedule.dayNameOf(at(10, 0)))
         assertEquals("Monday", TodaySchedule.dayNameOf(at(0, 0) - 24 * 60 * 60 * 1000L))
     }
+
+    // ---------- 「当前空闲」判定 ----------
+
+    /** 09:50 开始第二节 —— 拿它当「下一件事」用，方便算倒计时 */
+    private fun upcomingAt(hour: Int, minute: Int): List<TodaySchedule.TodayClass> =
+        TodaySchedule.remaining(TodaySchedule.today(tuesday, currentWeek = null, now = at(hour, minute)), at(hour, minute))
+
+    @Test
+    fun notIdleWhileAClassIsOngoing() {
+        // 10:00 第二节正在上（09:50-12:15）
+        assertFalse(TodaySchedule.isIdle(upcomingAt(10, 0), at(10, 0), advanceMinutes = 30))
+    }
+
+    @Test
+    fun notIdleWhenAllClassesAreDone() {
+        // 16:46 三节课全上完了 —— 这是「今天的课上完了」，不是空闲
+        assertFalse(TodaySchedule.isIdle(upcomingAt(16, 46), at(16, 46), advanceMinutes = 30))
+    }
+
+    @Test
+    fun notIdleWhenThereIsNoClassToday() {
+        // 周日没有任何课
+        val sunday = TodaySchedule.today(tuesday, currentWeek = null, now = at(0, 0) + 5L * 24 * 60 * 60 * 1000)
+        assertTrue(sunday.isEmpty())
+        assertFalse(TodaySchedule.isIdle(sunday, at(0, 0) + 5L * 24 * 60 * 60 * 1000, advanceMinutes = 30))
+    }
+
+    @Test
+    fun idleWhenGapIsLargerThanTheAdvanceWindow() {
+        // 13:00 空闲，下一节 15:10 —— 还有 130 分钟，远大于 30 分钟预警窗
+        assertTrue(TodaySchedule.isIdle(upcomingAt(13, 0), at(13, 0), advanceMinutes = 30))
+    }
+
+    @Test
+    fun notIdleExactlyAtTheAdvanceWindowBoundary() {
+        // 14:40 距 15:10 正好 30 分钟，预警窗也是 30 分钟 —— 边界取严格大于，
+        // 此时提醒业务已经在提示了，不该同时说「空闲」
+        assertFalse(TodaySchedule.isIdle(upcomingAt(14, 40), at(14, 40), advanceMinutes = 30))
+        // 再早一分钟（31 分钟）就算空闲
+        assertTrue(TodaySchedule.isIdle(upcomingAt(14, 39), at(14, 39), advanceMinutes = 30))
+    }
+
+    @Test
+    fun advanceWindowOfZeroMeansAlwaysReminding() {
+        // 预警窗为 0：只要还没到上课时间，就还算是「空闲」
+        assertTrue(TodaySchedule.isIdle(upcomingAt(15, 9), at(15, 9), advanceMinutes = 0))
+        // 负数做兜底收敛，不该被当成「永不空闲」
+        assertTrue(TodaySchedule.isIdle(upcomingAt(15, 9), at(15, 9), advanceMinutes = -5))
+    }
 }

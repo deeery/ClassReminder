@@ -1,6 +1,8 @@
 package com.example.classreminder.ui
 
 import android.app.TimePickerDialog
+import android.app.TimePickerDialog as SysTimePickerDialog
+import android.app.DatePickerDialog as SysDatePickerDialog
 import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -81,6 +83,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp as lerpColor
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.pointer.pointerInput
@@ -108,13 +111,24 @@ import com.example.classreminder.data.ClassEntity
 import com.example.classreminder.data.DEFAULT_NOTE_COLOR
 import com.example.classreminder.data.MainViewModel
 import com.example.classreminder.data.NOTE_COLOR_COUNT
+import com.example.classreminder.data.NOTE_TYPE_DEADLINE
+import com.example.classreminder.data.NOTE_TYPE_NONE
+import com.example.classreminder.data.NOTE_TYPES
 import com.example.classreminder.data.NoteEntity
+import com.example.classreminder.data.NoteType
+import com.example.classreminder.data.NoteTypeKind
 import com.example.classreminder.data.TimeAxis
 import com.example.classreminder.data.TodaySchedule
 import com.example.classreminder.data.WeekSchedule
+import com.example.classreminder.data.deadlineCountdown
+import com.example.classreminder.data.deadlineTimeLabel
+import com.example.classreminder.data.hasDeadline
+import com.example.classreminder.data.noteTypeAt
+import com.example.classreminder.data.typeLabel
 import com.example.classreminder.Prefs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.Calendar
 import kotlin.math.roundToInt
 
 private val dayOrder = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -642,24 +656,26 @@ fun MainScreen(
                 // 大标题不再写死「今天」，而是按当前时刻给问候语（早上好 / 午安 / …），
                 // 让首屏带一点人的语气。日期与周次仍放副标题，正文就不用再重复一遍。
                 //
-                // **顶栏整体比原先高**：大标题从 26sp 提到 28sp，上下内边距也各加了一档
-                // （top 8→12、bottom 10→14）。问候语比「今天」长（最长「早上好」3 个字），
-                // 行高要撑得住，同时留出足够的视觉呼吸区，避免大标题贴着状态栏。
+                // **顶栏整体比原先高**：大标题 28sp → 34sp 并且加粗到 SemiBold，
+                // 上下内边距也各加了一档（top 12→14、bottom 14→16）。
+                // 问候语是首屏唯一一句「有人味」的话，用户要求它更大更重 ——
+                // 做成接近 Material 的 displaySmall（36sp）而略收一格，
+                // 免得「早上好。」这四个字在窄屏上折行。
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.surface)
                         .statusBarsPadding()
-                        .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 14.dp)
+                        .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 16.dp)
                 ) {
                     Text(
                         text = greetingFor(clockNow),
-                        fontSize = 28.sp,
-                        lineHeight = 36.sp,
-                        fontWeight = FontWeight.Medium,
+                        fontSize = 34.sp,
+                        lineHeight = 42.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(6.dp))
                     Text(
                         text = todaySubtitle(currentWeek, clockNow),
                         fontSize = 12.sp,
@@ -750,8 +766,9 @@ fun MainScreen(
                 currentWeek = currentWeek,
                 onTabSelected = { tab ->
                     selectedTab = tab
-                    // 离开课表页就把展开的添加菜单收起来，免得切回来还敞着
-                    if (tab != 1) fabExpanded = false
+                    // 离开任何页都把展开的添加菜单收起来（今天 / 课表页都有这个菜单了），
+                    // 免得切回来还敞着
+                    fabExpanded = false
                     // 离开课表页也清掉网格选中：详情条和 FAB 的上移都跟着它，
                     // 留着会让下次回到课表页时看到一个「凭空的」选中态
                     if (tab != 1) selectedClassId = null
@@ -776,7 +793,7 @@ fun MainScreen(
                     label = "fabDetailLift"
                 )
                 Column(horizontalAlignment = Alignment.End) {
-                    // ── 加号正上方那个槽位：便签页放「回撤」，课表页让给展开菜单，今天页空着 ──
+                    // ── 加号正上方那个槽位：便签页放「回撤」，今天 / 课表页让给展开菜单 ──
                     if (selectedTab == 2) {
                         // 回撤只在真的有可撤销的操作时出现
                         AnimatedVisibility(visible = canUndo) {
@@ -789,7 +806,12 @@ fun MainScreen(
                         Column(horizontalAlignment = Alignment.End) {
                             Spacer(Modifier.height(12.dp))
                         }
-                        // ── 课表页：加号展开的两个方块，从加号那一侧向上长出来，收起时缩回去 ──
+                        // ── 今天 / 课表页：加号展开的方块菜单，从加号那一侧向上长出来 ──
+                        //
+                        // 今天页原本是「点加号直接进添加课程对话框」，用户要求改成和课表页
+                        // 一样的展开菜单 —— 两个页面的加号现在**行为完全一致**，
+                        // 只是菜单项不同（今天页多一项「添加便签」）。
+                        // 这样同一个按钮在哪个页面都不会「点了直接跳走」，用户对加号的预期是统一的。
                         AnimatedVisibility(
                             visible = fabExpanded,
                             enter = fadeIn(tween(ENTER_MS)) +
@@ -798,6 +820,15 @@ fun MainScreen(
                                 shrinkVertically(tween(EXIT_MS), shrinkTowards = Alignment.Bottom)
                         ) {
                             Column(horizontalAlignment = Alignment.End) {
+                                // 今天页排在最上的是便签 —— 它和另外两项（开对话框填表单）
+                                // 不是一类动作，放最前面也最不容易和「添加提醒」误点混
+                                if (selectedTab == 0) {
+                                    FabTile("添加便签", Icons.Default.Edit) {
+                                        fabExpanded = false
+                                        addingNote = true
+                                    }
+                                    Spacer(Modifier.height(10.dp))
+                                }
                                 FabTile("临时提醒", Icons.Default.DateRange) {
                                     fabExpanded = false
                                     addingKind = AddKind.ONE_OFF
@@ -813,12 +844,11 @@ fun MainScreen(
                     }
                     FloatingActionButton(
                         onClick = {
-                            // 便签页 = 添加便签；课表页 = 展开 / 收起添加菜单；
-                            // 今天页 = 直接进「添加课程 / 提醒」对话框（这页没有可展开的二级项）
+                            // 便签页 = 直接添加便签（这页没有二级项）；
+                            // 今天 / 课表页 = 展开 / 收起添加菜单
                             when (selectedTab) {
-                                1 -> fabExpanded = !fabExpanded
                                 2 -> addingNote = true
-                                else -> addingKind = AddKind.LONG_TERM
+                                else -> fabExpanded = !fabExpanded
                             }
                         },
                         modifier = Modifier
@@ -835,7 +865,7 @@ fun MainScreen(
                     ) {
                         // 加号 ↔ 关闭：交叉淡入 + 缩放。两个图标同尺寸，切换时不会跳
                         AnimatedContent(
-                            targetState = selectedTab == 1 && fabExpanded,
+                            targetState = selectedTab != 2 && fabExpanded,
                             transitionSpec = {
                                 (fadeIn(tween(ENTER_MS)) + scaleIn(tween(ENTER_MS), initialScale = 0.6f)) togetherWith
                                     (fadeOut(tween(EXIT_MS)) + scaleOut(tween(EXIT_MS), targetScale = 0.6f))
@@ -848,8 +878,7 @@ fun MainScreen(
                                 contentDescription = when {
                                     open -> "收起添加菜单"
                                     selectedTab == 2 -> "添加便签"
-                                    selectedTab == 1 -> "添加提醒"
-                                    else -> "添加课程"
+                                    else -> "添加课程或便签"
                                 }
                             )
                         }
@@ -867,6 +896,10 @@ fun MainScreen(
                     classes = classes,
                     notes = notes,
                     currentWeek = currentWeek,
+                    // 「当前空闲」的判定要用设置里那个提前提醒窗口 ——
+                    // 它就是「离上课还有多久该开始提示我」的阈值，语义完全对得上。
+                    // 每次回到这一页都重读一次，改了设置立刻生效，不用重启。
+                    advanceMinutes = Prefs.getAdvanceMinutes(ctx),
                     onOpenClass = { editing = it },
                     onOpenNotes = {
                         selectedTab = 2
@@ -1002,9 +1035,16 @@ fun MainScreen(
     if (addingNote) {
         NoteEditDialog(
             initial = null,
-            onSave = { text, colorIndex ->
+            onSave = { text, colorIndex, typeIndex, customLabel, deadlineAt ->
                 // 有高亮选中的便签就插到它上方，否则照旧置顶
-                viewModel.addNote(text, aboveNoteId = selectedNote?.id, colorIndex = colorIndex)
+                viewModel.addNote(
+                    text = text,
+                    aboveNoteId = selectedNote?.id,
+                    colorIndex = colorIndex,
+                    typeIndex = typeIndex,
+                    customLabel = customLabel,
+                    deadlineAt = deadlineAt
+                )
                 addingNote = false
             },
             onDismiss = { addingNote = false }
@@ -1014,9 +1054,16 @@ fun MainScreen(
     editingNote?.let { target ->
         NoteEditDialog(
             initial = target,
-            onSave = { text, colorIndex ->
-                // 文字留空 = 只想换色：updateNote 内部会保留原文
-                viewModel.updateNote(target.id, text, colorIndex)
+            onSave = { text, colorIndex, typeIndex, customLabel, deadlineAt ->
+                // 文字留空 = 只想换色 / 改分类：updateNote 内部会保留原文
+                viewModel.updateNote(
+                    id = target.id,
+                    text = text,
+                    colorIndex = colorIndex,
+                    typeIndex = typeIndex,
+                    customLabel = customLabel,
+                    deadlineAt = deadlineAt
+                )
                 editingNote = null
             },
             onDismiss = { editingNote = null }
@@ -1293,6 +1340,19 @@ fun NoteListView(
     onMove: (Int, Int) -> Unit,
     onAdd: () -> Unit
 ) {
+    // Deadline 倒计时自己走字。和「今天」页一样 30 秒一格 ——
+    // 倒计时最小档是「分钟」，30 秒的刷新足够让它看起来是活的，
+    // 又不至于每秒重组整个列表（那会明显掉帧）。
+    // **注意这个时钟必须无条件跑**（不能只在「有 deadline 便签时」才跑）：
+    // 条件是列表的函数，列表一变它就变，LaunchedEffect 会被反复重启，反而不稳。
+    var clockNow by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000L)
+            clockNow = System.currentTimeMillis()
+        }
+    }
+
     if (notes.isEmpty()) {
         EmptyNotes(searching = searching, onAdd = onAdd)
         return
@@ -1365,6 +1425,7 @@ fun NoteListView(
                     selected = selectedId == note.id,
                     dragOffsetY = if (isDragging) draggedOffset else 0,
                     revealed = revealedId == note.id,
+                    clockNow = clockNow,
                     onSelect = { onSelect(note) },
                     onReveal = { revealedId = note.id },
                     onClose = { if (revealedId == note.id) revealedId = null },
@@ -1432,6 +1493,7 @@ private fun NoteRow(
     selected: Boolean,
     dragOffsetY: Int,
     revealed: Boolean,
+    clockNow: Long,
     onSelect: () -> Unit,
     onReveal: () -> Unit,
     onClose: () -> Unit,
@@ -1572,35 +1634,49 @@ private fun NoteRow(
             }
     ) {
         // ── 底层：左滑露出来的方形编辑按钮。裁剪只做在这一层，免得把上层卡片的放大和阴影一起裁掉 ──
-        Box(
-            modifier = Modifier.matchParentSize(),
-            contentAlignment = Alignment.CenterEnd
+        //
+        // **拖动时整层收起来**：长按拖动的过程中卡片会跟着手指上下走，而这一层是
+        // `matchParentSize` 钉在行上的，卡片一移开就会露出底下这个蓝色方块 ——
+        // 那不是用户划出来的，是「卡片让位」造成的假象，看着像误触发了编辑。
+        // 所以只要 dragging 为真就整层不可见（连命中一起关掉，避免拖动中误点进编辑）。
+        //
+        // 用 AnimatedVisibility 而不是 if：划开 / 收起本来就有 180ms 的吸附动画，
+        // 淡出能让「按钮消失」和卡片回位是同一件事，不会先「啪」地闪没。
+        AnimatedVisibility(
+            visible = !dragging,
+            enter = fadeIn(tween(EXIT_MS)),
+            exit = fadeOut(tween(EXIT_MS))
         ) {
             Box(
-                modifier = Modifier
-                    .width(SWIPE_EDIT_WIDTH)
-                    .height(revealHeightDp)
-                    // 缩放要放在 clip / background 之前，否则缩的只是图标、底色不动
-                    .graphicsLayer {
-                        scaleX = revealScale
-                        scaleY = revealScale
-                    }
-                    .clip(SHAPE_CARD)
-                    .background(MaterialTheme.colorScheme.primary)
-                    .clickable(
-                        interactionSource = revealInteraction,
-                        indication = LocalIndication.current
-                    ) {
-                        currentOnClose()
-                        currentOnEdit()
-                    },
-                contentAlignment = Alignment.Center
+                modifier = Modifier.matchParentSize(),
+                contentAlignment = Alignment.CenterEnd
             ) {
-                Icon(
-                    Icons.Default.Edit,
-                    contentDescription = "编辑便签",
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
+                Box(
+                    modifier = Modifier
+                        .width(SWIPE_EDIT_WIDTH)
+                        .height(revealHeightDp)
+                        // 缩放要放在 clip / background 之前，否则缩的只是图标、底色不动
+                        .graphicsLayer {
+                            scaleX = revealScale
+                            scaleY = revealScale
+                        }
+                        .clip(SHAPE_CARD)
+                        .background(MaterialTheme.colorScheme.primary)
+                        .clickable(
+                            interactionSource = revealInteraction,
+                            indication = LocalIndication.current
+                        ) {
+                            currentOnClose()
+                            currentOnEdit()
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = "编辑便签",
+                        tint = MaterialTheme.colorScheme.onPrimary
+                    )
+                }
             }
         }
 
@@ -1754,7 +1830,9 @@ private fun NoteRow(
                 contentAlignment = Alignment.Center
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -1763,13 +1841,84 @@ private fun NoteRow(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         color = textColor,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 16.dp)
+                        // 占满剩余宽度：右边的徽章 / 倒计时才不会被文字推到看不见
+                        modifier = Modifier.weight(1f)
                     )
+                    // ── 右侧：分类徽章 + Deadline 倒计时 ──
+                    // 用户要求 deadline 便签「在右侧显示 deadline 时刻与剩余倒计时」，
+                    // 分类徽章顺路放在它左边 —— 两者都是「这条便签的附加信息」，
+                    // 归在同一条右侧栏里，左对齐的正文就不用为它们让位
+                    val label = note.typeLabel()
+                    if (label.isNotEmpty() || note.hasDeadline) {
+                        Spacer(Modifier.width(10.dp))
+                        Column(horizontalAlignment = Alignment.End) {
+                            if (label.isNotEmpty()) {
+                                TypeBadge(label, noteColor)
+                            }
+                            if (note.hasDeadline) {
+                                if (label.isNotEmpty()) Spacer(Modifier.height(4.dp))
+                                DeadlineBadge(note.deadlineAt, clockNow, noteColor)
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
+}
+
+/**
+ * 便签上的分类徽章。
+ *
+ * 用便签自己的色号做浅底 + 同色文字（而不是纯色填充）：右侧栏是「附加信息」，
+ * 用低饱和的浅底才不至于把左对齐的正文压过去。色号 α 0.14 的底在浅色和深色下都够淡。
+ *
+ * 文字色直接用 [accent]（不另收一个 textColor 参数）：浅底 + 同色字天然满足
+ * 「同一色系的深浅配对」，多传一个参数只会让调用方纠结该传什么。
+ */
+@Composable
+private fun TypeBadge(label: String, accent: Color) {
+    Surface(
+        shape = SHAPE_CHIP,
+        color = accent.copy(alpha = 0.14f)
+    ) {
+        Text(
+            text = label,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+            color = accent,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+        )
+    }
+}
+
+/**
+ * Deadline 徽章：上行是截止时刻，下行是剩余倒计时。
+ *
+ * 倒计时用便签色号而不是主题蓝 —— 它属于这条便签，配色该跟便签走。
+ * 「已过期」时整块改走 error 色：这是唯一需要用户立刻注意的状态，
+ * 让它和「还有 3 天」在颜色上就分得开，而不是靠读文字。
+ */
+@Composable
+private fun DeadlineBadge(deadlineAt: Long, now: Long, accent: Color) {
+    val overdue = deadlineAt <= now
+    val scheme = MaterialTheme.colorScheme
+    val color = if (overdue) scheme.error else accent
+    Column(horizontalAlignment = Alignment.End) {
+        Text(
+            text = deadlineTimeLabel(deadlineAt, now),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+            color = color,
+            maxLines = 1
+        )
+        Text(
+            text = deadlineCountdown(deadlineAt, now),
+            fontSize = 10.sp,
+            color = color.copy(alpha = 0.85f),
+            maxLines = 1
+        )
     }
 }
 
@@ -1913,32 +2062,48 @@ private val UndoIcon: ImageVector by lazy {
 /**
  * 添加 / 编辑便签。
  *
- * 编辑时额外给一条**调色盘**：8 个色块 + 当前选中打勾。
- * 调色盘第一格是便签原本的竖线颜色（主题主色），所以「改回默认」也有据可依。
+ * 自上而下三段：**内容 → 颜色 → 分类**。
+ * 分类放在最后（用户要求的「位置在颜色选择器下方」），因为它最次要：
+ * 随手记一条时不选也完全可用，默认就是「空」。
  *
- * [onSave] 同时回传文字与色号；文字为空时由上层决定是否沿用原文（只改色的场景）。
+ * 分类这块是**渐进展开**的：
+ *  - 选一般分类（工作 / 生活 / …）→ 什么都不多问
+ *  - 选「自定义」→ 下方多出一个「分类名称」输入框
+ *  - 选 Deadline 类 → 多出一个日期时间选择（可留空）
+ * 这样对话框在默认状态下仍是原来那个「输入框 + 调色盘」的简洁样子，
+ * 只有用户真的选了复杂分类，界面才跟着长出来。
+ *
+ * [onSave] 回传六个字段，顺序和 [NoteEntity] 的声明一致。
  */
 @Composable
 fun NoteEditDialog(
     initial: NoteEntity? = null,
-    onSave: (String, Int) -> Unit,
+    onSave: (text: String, colorIndex: Int, typeIndex: Int, customLabel: String, deadlineAt: Long) -> Unit,
     onDismiss: () -> Unit
 ) {
     var text by remember { mutableStateOf(initial?.text.orEmpty()) }
     // 当前选中的色号。打开时落在便签自己的颜色上；新建则是默认色
     var colorIndex by remember { mutableIntStateOf(initial?.colorIndex ?: DEFAULT_NOTE_COLOR) }
+    // 分类三兄弟。打开编辑时落在便签自己的分类上，新建则是「空」
+    var typeIndex by remember { mutableIntStateOf(initial?.typeIndex ?: NOTE_TYPE_NONE) }
+    var customLabel by remember { mutableStateOf(initial?.customLabel.orEmpty()) }
+    var deadlineAt by remember { mutableLongStateOf(initial?.deadlineAt ?: 0L) }
+
     val focusRequester = remember { FocusRequester() }
     // 打开就聚焦，「随手记一条」不用再点一下输入框
     LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
 
     val palette = notePalette()
     val editing = initial != null
+    val type = noteTypeAt(typeIndex)
+    val now = System.currentTimeMillis()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (editing) "编辑便签" else "添加便签") },
         text = {
-            Column {
+            // 分类多了以后内容可能超过一屏，套一层纵向滚动兜底（小屏 + 展开了日期选择时）
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
@@ -1952,29 +2117,298 @@ fun NoteEditDialog(
                         .focusRequester(focusRequester)
                 )
                 Spacer(Modifier.height(14.dp))
-                Text(
-                    text = "颜色",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                FieldLabel("颜色")
                 Spacer(Modifier.height(8.dp))
                 NoteColorPicker(
                     colors = palette,
                     selectedIndex = colorIndex,
                     onSelect = { colorIndex = it }
                 )
+
+                // ── 分类 ──
+                Spacer(Modifier.height(16.dp))
+                FieldLabel("分类")
+                Spacer(Modifier.height(8.dp))
+                NoteTypePicker(
+                    types = NOTE_TYPES,
+                    selectedIndex = typeIndex,
+                    accentColor = palette[colorIndex.coerceIn(0, palette.lastIndex)],
+                    onSelect = { picked ->
+                        typeIndex = picked
+                        // 换成非 Deadline 类时把已设的时刻清掉 —— 否则用户切走再切回来，
+                        // 会看到一个「上次设的、可能早就过期」的时间，像是凭空冒出来的
+                        if (noteTypeAt(picked).kind != NoteTypeKind.DEADLINE) deadlineAt = 0L
+                    }
+                )
+
+                // 自定义类：多问一个名字
+                if (type.editableLabel) {
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = customLabel,
+                        onValueChange = { customLabel = it },
+                        label = { Text("分类名称") },
+                        placeholder = { Text(if (type.kind == NoteTypeKind.DEADLINE) "例如「期末论文」" else "例如「科研」") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                // Deadline 类：多问一个截止时刻
+                if (type.kind == NoteTypeKind.DEADLINE) {
+                    Spacer(Modifier.height(12.dp))
+                    DeadlineField(
+                        deadlineAt = deadlineAt,
+                        now = now,
+                        onChange = { deadlineAt = it }
+                    )
+                }
             }
         },
         confirmButton = {
-            // 文字留空时仍可保存 —— 上层会保留原文、只改颜色。
+            // 文字留空时仍可保存 —— 上层会保留原文、只改颜色或分类。
             // 新建便签没有原文，所以那种情况下仍要求非空
             Button(
-                onClick = { onSave(text, colorIndex) },
+                onClick = { onSave(text, colorIndex, typeIndex, customLabel, deadlineAt) },
                 enabled = editing || text.isNotBlank()
             ) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
+}
+
+/** 对话框里的小节标题：和「颜色」同一套灰字规格，避免每个小节各写各的字号 */
+@Composable
+private fun FieldLabel(text: String) {
+    Text(
+        text = text,
+        fontSize = 12.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+/**
+ * 截止时刻选择。
+ *
+ * 分两个按钮（日期 / 时间）而不是一个合成控件：Android 原生的
+ * `DatePickerDialog` / `TimePickerDialog` 本来就是分开的，硬凑一个
+ * 「日期时间对话框」要么自己画、要么依赖 material3 的 DatePicker（1.1.2 上还是实验 API），
+ * 都不如两个系统对话框来得直接可靠。
+ *
+ * **没设时间时显示「未设置」而不是默认当前时间**：Deadline 的核心信息是「用户自己定的那一刻」，
+ * 悄悄替他填一个现在，他会以为已经设好了。
+ */
+@Composable
+private fun DeadlineField(
+    deadlineAt: Long,
+    now: Long,
+    onChange: (Long) -> Unit
+) {
+    val ctx = LocalContext.current
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "截止",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(34.dp)
+        )
+        // 没设时两个按钮都显示占位文案；设了之后各显示自己的那半
+        val hasValue = deadlineAt > 0L
+        val cal = remember(deadlineAt) {
+            Calendar.getInstance().apply { timeInMillis = if (hasValue) deadlineAt else now }
+        }
+        OutlinedButton(
+            onClick = {
+                // 显式走 android.app 的那两个**类**（不是 material3 的同名 @Composable）。
+                // 通配导入 material3.* 之后，`DatePickerDialog(...)` 会被优先解析成
+                // material3 的 composable 版本，参数表完全不同 —— 所以这里别名导入，
+                // 一眼能看出用的是平台对话框。
+                SysDatePickerDialog(
+                    ctx,
+                    { _, year, month, day ->
+                        val next = Calendar.getInstance().apply {
+                            timeInMillis = if (hasValue) deadlineAt else now
+                            set(Calendar.YEAR, year)
+                            set(Calendar.MONTH, month)
+                            set(Calendar.DAY_OF_MONTH, day)
+                        }
+                        onChange(next.timeInMillis)
+                    },
+                    cal.get(Calendar.YEAR),
+                    cal.get(Calendar.MONTH),
+                    cal.get(Calendar.DAY_OF_MONTH)
+                ).show()
+            },
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Text(
+                text = if (hasValue) "${cal.get(Calendar.MONTH) + 1}/${cal.get(Calendar.DAY_OF_MONTH)}"
+                else "选日期",
+                fontSize = 13.sp
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        OutlinedButton(
+            onClick = {
+                SysTimePickerDialog(
+                    ctx,
+                    { _, hour, minute ->
+                        val next = Calendar.getInstance().apply {
+                            timeInMillis = if (hasValue) deadlineAt else now
+                            set(Calendar.HOUR_OF_DAY, hour)
+                            set(Calendar.MINUTE, minute)
+                            set(Calendar.SECOND, 0)
+                            set(Calendar.MILLISECOND, 0)
+                        }
+                        onChange(next.timeInMillis)
+                    },
+                    cal.get(Calendar.HOUR_OF_DAY),
+                    cal.get(Calendar.MINUTE),
+                    true
+                ).show()
+            },
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Text(
+                text = if (hasValue) {
+                    String.format(
+                        java.util.Locale.getDefault(),
+                        "%02d:%02d",
+                        cal.get(Calendar.HOUR_OF_DAY),
+                        cal.get(Calendar.MINUTE)
+                    )
+                } else "选时间",
+                fontSize = 13.sp
+            )
+        }
+        if (hasValue) {
+            Spacer(Modifier.width(8.dp))
+            TextButton(
+                onClick = { onChange(0L) },
+                contentPadding = PaddingValues(horizontal = 8.dp)
+            ) {
+                Text("清除", fontSize = 12.sp)
+            }
+        }
+    }
+    if (deadlineAt > 0L) {
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "${deadlineTimeLabel(deadlineAt, now)} · ${deadlineCountdown(deadlineAt, now)}",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.primary
+        )
+    }
+}
+
+/**
+ * 分类选择器。横排胶囊，分两行铺开。
+ *
+ * 为什么不用「一行 `Row` + 均分」的调色盘写法：分类名长短不一（「空」1 个字、
+ * 「Deadline 自定义」9 个字），等分会把长名字挤成省略号。
+ * 这里改成**内容自适应宽度**的胶囊 —— 这是 chip 在 Material 里的标准排布方式，
+ * 也是「分类」这类不定长标签的正解。
+ *
+ * 分两行是**按语义**切的，不是按宽度自动折行：第一行前四项是「空 + 三个一般分类」，
+ * 第二行是「Deadline + 两种自定义」。自动折行会随字体大小 / 屏幕宽度变来变去，
+ * 同一个对话框在不同设备上排布不同；固定分组则永远稳定，且语义上是「普通 / 特殊」两档。
+ *
+ * 选中态用便签自己的色号（[accentColor]）而不是主题蓝：和调色盘、竖条保持同一套语言 ——
+ * 这条便签的「身份色」选了什么，它身上所有强调都用这个色。
+ */
+@Composable
+private fun NoteTypePicker(
+    types: List<NoteType>,
+    selectedIndex: Int,
+    accentColor: Color,
+    onSelect: (Int) -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // 第一行：空 + 一般分类；第二行：Deadline + 自定义
+        TypeChipRow(types, selectedIndex, accentColor, 0 until NOTE_TYPE_DEADLINE, onSelect)
+        TypeChipRow(types, selectedIndex, accentColor, NOTE_TYPE_DEADLINE..types.lastIndex, onSelect)
+    }
+}
+
+/** 分类选择器里的一行胶囊 */
+@Composable
+private fun TypeChipRow(
+    types: List<NoteType>,
+    selectedIndex: Int,
+    accentColor: Color,
+    range: IntRange,
+    onSelect: (Int) -> Unit
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        range.forEach { index ->
+            val type = types.getOrNull(index) ?: return@forEach
+            TypeChip(
+                label = type.label,
+                selected = index == selectedIndex,
+                accentColor = accentColor
+            ) { onSelect(index) }
+        }
+    }
+}
+
+/** 单个分类胶囊。选中时填充便签色号 + 打勾，未选中只是一圈描边 */
+@Composable
+private fun TypeChip(
+    label: String,
+    selected: Boolean,
+    accentColor: Color,
+    onClick: () -> Unit
+) {
+    // 打勾的颜色按胶囊底色亮度选：浅底用深勾、深底用白勾（和调色盘同一套判据）
+    val onAccent = if (accentColor.luminance() > 0.55f) Color(0xFF1F1F1F) else Color.White
+    val interaction = remember { MutableInteractionSource() }
+    val scale = rememberPressScale(interaction, pressedScale = 0.96f)
+    Surface(
+        shape = SHAPE_CHIP,
+        color = if (selected) accentColor else Color.Transparent,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (selected) accentColor else MaterialTheme.colorScheme.outlineVariant
+        ),
+        modifier = Modifier.graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+    ) {
+        Row(
+            modifier = Modifier
+                .clickable(
+                    interactionSource = interaction,
+                    indication = LocalIndication.current,
+                    onClick = onClick
+                )
+                .padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (selected) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = onAccent
+                )
+                Spacer(Modifier.width(5.dp))
+            }
+            Text(
+                text = label,
+                fontSize = 12.sp,
+                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                color = if (selected) onAccent else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+        }
+    }
 }
 
 /**
@@ -2203,9 +2637,16 @@ private val HEADER_GAP = 6.dp
  * 两者都是**底纹**而不是内容，所以都比课程块淡得多。竖线刻意比横线再淡一档：
  * 横线承载「时间刻度」这层信息（要和左侧标签对齐），竖线只是帮眼睛定位到某一天，
  * 两者同等强度的话，网格会显得比课本身还抢眼。
+ *
+ * **深色下整体调高一档**：底纹是靠 `onSurface` 提亮实现的，深色主题里
+ * `onSurface` 本身是接近白的浅色，同样的 alpha 叠在深底上对比度会比浅色主题弱得多
+ * （浅色是「深灰压白底」，深色是「浅灰提黑底」，后者的感知强度天然更低）。
+ * 所以深色单独给一套略高的值，让两边的**观感**对齐，而不是让数值对齐。
  */
 private const val GRID_LINE_ALPHA = 0.08f
 private const val GRID_COLUMN_ALPHA = 0.05f
+private const val GRID_LINE_ALPHA_DARK = 0.13f
+private const val GRID_COLUMN_ALPHA_DARK = 0.09f
 
 /**
  * 「斑马纹」底纹的透明度：按小时交替铺一层极淡的横向色带。
@@ -2215,9 +2656,11 @@ private const val GRID_COLUMN_ALPHA = 0.05f
  * 定位「这是第几节」不用每次回到左边读刻度。
  *
  * 比横线还淡（横线 0.08）：它是**背景的背景**，一旦能明显看出来就会盖过课程块。
- * 0.03 是在浅色下刚好「若有若无」、深色下不至于消失的临界值。
+ * 0.03 是在浅色下刚好「若有若无」的临界值；深色下这个值会直接消失
+ * （同样的 alpha 在深底上几乎看不出），所以深色给 0.06。
  */
 private const val ZEBRA_ALPHA = 0.03f
+private const val ZEBRA_ALPHA_DARK = 0.06f
 
 /** 单列最大宽度，免得大屏上几列被拉得太开 */
 private val MAX_COLUMN_WIDTH = 76.dp
@@ -2402,6 +2845,13 @@ fun WeekGrid(
         val labelWidthPx = with(LocalDensity.current) { labelWidth.toPx() }
         val gridHeightPx = with(LocalDensity.current) { gridHeight.toPx() }
         val lineBase = MaterialTheme.colorScheme.onSurface
+        // 深色主题下底纹整体调高一档（原因见常量上方的注释）：
+        // 底纹靠 onSurface 提亮，深色里 onSurface 是浅色，同 alpha 的感知强度天然更弱。
+        // 判定沿用项目里已有的手法（notePalette 也是这么判的），不额外引入状态。
+        val isDarkGrid = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+        val zebraAlpha = if (isDarkGrid) ZEBRA_ALPHA_DARK else ZEBRA_ALPHA
+        val gridLineAlpha = if (isDarkGrid) GRID_LINE_ALPHA_DARK else GRID_LINE_ALPHA
+        val gridColumnAlpha = if (isDarkGrid) GRID_COLUMN_ALPHA_DARK else GRID_COLUMN_ALPHA
         // 表头下的分隔线。不能用网格的横线浓度（0.08），那是「底纹」；
         // 这是真正的结构线，要一眼看得见，取 outline 的中等浓度
         val headerDivider = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
@@ -2621,7 +3071,7 @@ fun WeekGrid(
                                 val h = y1 - y0
                                 if (h <= 0.5f) return@forEach
                                 drawRect(
-                                    color = lineBase.copy(alpha = ZEBRA_ALPHA),
+                                    color = lineBase.copy(alpha = zebraAlpha),
                                     topLeft = Offset(labelWidthPx, y0),
                                     size = Size(size.width - labelWidthPx, h)
                                 )
@@ -2632,7 +3082,7 @@ fun WeekGrid(
                                 marks.forEach { minute ->
                                     val y = mapping.fractionOf(minute) * gridHeightPx
                                     drawLine(
-                                        color = lineBase.copy(alpha = GRID_LINE_ALPHA * alpha),
+                                        color = lineBase.copy(alpha = gridLineAlpha * alpha),
                                         start = Offset(labelWidthPx, y),
                                         end = Offset(size.width, y),
                                         strokeWidth = 1f
@@ -2645,7 +3095,7 @@ fun WeekGrid(
                             // 竖向列分隔：只画列与列之间，不画最右那条边
                             columnEdgesPx.forEach { x ->
                                 drawLine(
-                                    color = lineBase.copy(alpha = GRID_COLUMN_ALPHA),
+                                    color = lineBase.copy(alpha = gridColumnAlpha),
                                     start = Offset(x, 0f),
                                     end = Offset(x, gridHeightPx),
                                     strokeWidth = 1f

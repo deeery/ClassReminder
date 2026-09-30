@@ -4,14 +4,19 @@
 
 ## 功能
 
-- **快速便签** — 首页是随手记的便签列表：点「+」新增（默认置顶；若已高亮选中某条则插到它上方），单击选中高亮、双击直接进编辑，左下角浮出编辑 / 删除，点空白处取消选中；编辑对话框里带 **8 色调色盘**，选色后便签左端竖线、描边、光晕即时跟随（颜色以索引存库，深浅主题各取合适色值）；长按整栏上下拖动排序（拖动时略微放大并抬起阴影）；左滑露出编辑按钮、大幅左滑直接滑出删除；「回撤」按钮（纯图标，与加号按钮同尺寸对齐）可撤销上一次操作
-- **顶栏问候语** — 「今天」页顶栏按当前小时显示 `早上好。` / `午安。` / `下午好。` / `晚上好。` / `夜深了。`，下方接日期与周次
+- **「今天」首屏** — 打开即知「现在该干什么」：正在上课时用**实心主色卡 + 倒计时**（「还剩 27 分钟」），没课则显示下一节；进入预警窗之前显示「**当前空闲**」与「距离下一件事 N 小时后」；下方是今天剩余时间轴（46dp 左对齐）与便签摘要（最多 5 条、Deadline 类优先、超量时末位换成灰色「…」省略栏）。时间每 30 秒自刷新
+- **快速便签** — 随手记的便签列表：点「+」新增（默认置顶；若已高亮选中某条则插到它上方），单击选中高亮、双击直接进编辑，左下角浮出编辑 / 删除，点空白处取消选中；编辑对话框里带 **8 色调色盘**（选色后便签左端竖线、描边、光晕即时跟随，颜色以索引存库、深浅主题各取合适色值）与**分类选择**；长按整栏上下拖动排序（拖动时略微放大并抬起阴影）；左滑露出编辑按钮、大幅左滑直接滑出删除；「回撤」按钮（纯图标，与加号按钮同尺寸对齐）可撤销上一次操作
+- **便签分类与 Deadline** — 分类共 7 项：空（默认）/ 工作 / 生活 / 学习 / Deadline / 自定义 / Deadline 自定义；后两类可改名，带 Deadline 的分类会显示**截止时刻 + 倒计时**徽章（过期用错误红），今天页的摘要里 Deadline 类自动上浮
+- **顶栏问候语** — 按当前小时显示 `早上好。` / `午安。` / `下午好。` / `晚上好。` / `夜深了。`，下方接日期与周次
 - **课程管理** — 添加 / 编辑 / 删除每周课程，数据持久化到 Room 数据库
+- **PDF 课表导入** — 设置页可导入教务系统导出的课表 PDF（iText / Rotate 90 / UniGB-UCS2-H 编码），同一门课重复导入会覆盖而非重复添加；PDF 里没有具体时刻，导入后按默认作息推算，可逐条修改
+- **周次过滤** — 支持 `1-16周` / `第6周` / `1-8周,10-12周` / `1,3,5周` / 单双周 `1-16周(单)` 等写法，按当前周决定显示与提醒；解析不出周次时视为「不确定」，不限制显示
 - **智能提醒** — 前台 Service 每 30 秒轮询，课程即将开始或正在上课时发送高优先级通知
 - **锁屏弹窗** — 可选全屏锁屏弹窗（LockOverlayActivity），不错过每一节课
-- **周课表** — 底部栏切换「便签」和「课表」两种视图，课表支持表格 / 列表两种模式；右下角加号上方有**查看 / 编辑模式切换**（默认查看：眼睛图标，点课程只高亮选中并展开详情、不弹编辑框；点一下切编辑：铅笔图标，点课程直接进编辑对话框）；表格纵轴按**真实时间比例**（从本周最早一节课开始、随屏幕高度自适应），**点列头可高亮任意一天**——高亮列会加宽、左侧刻度换成那一天各事项的起止时刻；再点一次列头取消全部高亮，左侧退回等距的固定间隔；今天那一列的表头带「今日」角标（与手动高亮无关）。列表模式下高亮分**四级强度**（今天 / 悬停 / 按住 / 选中），正在上课的那一节额外挂一颗小圆点和柔光晕
+- **周课表** — 底部栏切换「今天 / 课表 / 便签 / 设置」四个视图，课表支持表格 / 列表两种模式；右下角加号上方有**查看 / 编辑模式切换**（默认查看：眼睛图标，点课程只高亮选中并展开详情、不弹编辑框；点一下切编辑：铅笔图标，点课程直接进编辑对话框）；表格纵轴按**真实时间比例**（从本周最早一节课开始、随屏幕高度自适应），**点列头可高亮任意一天**——高亮列会加宽、左侧刻度换成那一天各事项的起止时刻；再点一次列头取消全部高亮，左侧退回等距的固定间隔；今天那一列的表头带「今日」角标（与手动高亮无关）。列表模式下高亮分**四级强度**（今天 / 悬停 / 按住 / 选中），正在上课的那一节额外挂一颗小圆点和柔光晕
 - **动态前台通知** — 前台通知实时显示检测状态：正在上课/即将上课/今日课程概况
 - **浅色/深色主题** — 三种模式：跟随系统、浅色、深色，设置页一键切换
+- **国产 ROM 保活引导** — OPPO / 一加 / realme 机型在设置页显示「特殊权限」与「应用详情」两个入口（这类权限没有标准 API，只能引导用户手动开启；组件名失效时兜底到应用详情页，不会点了没反应）
 - **开机自启** — 可开启开机自动启动提醒服务
 - **自定义图标** — 支持启动器图标和通知栏图标
 
@@ -21,10 +26,11 @@
 MainActivity (单 Activity)
   └─ ClassReminderTheme (浅色/深色支持)
        └─ Surface + Scaffold
-            ├─ TopAppBar × 底部导航栏（便签 / 课表 / 设置）
-            ├─ NoteListView (快速便签：选中高亮 / 拖动排序 / 左滑 / 回撤)
+            ├─ TopAppBar × 底部导航栏（今天 / 课表 / 便签 / 设置）
+            ├─ TodayScreen (今天：主卡 / 空闲态 / 剩余时间轴 / 便签摘要)
             ├─ WeekView (表格 / 列表两种模式，按周分组)
-            └─ SettingsPage (主题、权限、提醒设置)
+            ├─ NoteListView (快速便签：选中高亮 / 拖动排序 / 左滑 / 回撤)
+            └─ SettingsPage (主题、权限、提醒设置、导入课表、ROM 引导)
   └─ MainViewModel ──→ Room Database
   └─ ClassReminderService (Foreground Service，每 30 秒轮询)
        └─ LockOverlayActivity (锁屏弹窗)
@@ -35,22 +41,218 @@ MainActivity (单 Activity)
 
 | 文件 | 作用 |
 |---|---|
-| `ui/MainScreen.kt` | Compose UI：底部栏、快速便签（选中 / 拖动排序 / 左滑 / 回撤）、周课表、设置页面、添加/编辑对话框 |
-| `ui/TodayScreen.kt` | 「今天」首屏：当前/下一节课主卡、今天剩余时间轴、便签摘要 |
+| `ui/MainScreen.kt` | Compose UI（约 4950 行）：底部栏、快速便签（选中 / 拖动排序 / 左滑 / 回撤）、周课表、设置页面、添加 / 编辑对话框 |
+| `ui/TodayScreen.kt` | 「今天」首屏：当前 / 下一节课主卡、空闲态、今天剩余时间轴、便签摘要 |
 | `ui/Theme.kt` | 自定义主题：Google Blue 调色板（浅 `#1A73E8` / 深 `#8AB4F8`）、ThemeMode 枚举 |
-| `data/MainViewModel.kt` | ViewModel：连接 UI 和 Room 数据库，便签的增删改排序与回撤栈 |
+| `ui/RomGuide.kt` | 国产 ROM（OPPO / 一加 / realme）特殊权限引导，含应用详情兜底 |
+| `data/MainViewModel.kt` | ViewModel：连接 UI 和 Room 数据库，便签的增删改排序与回撤栈、PDF 课表导入 |
 | `data/ClassEntity.kt` | Room 实体（id, 标题, 星期, 开始/结束时间, 教室, 教师, 周次, 日期） |
 | `data/ClassDao.kt` | Room DAO（查询、插入、删除） |
-| `data/NoteEntity.kt` | Room 实体（便签：id, 内容, 排序位置, 创建时间） |
+| `data/NoteEntity.kt` | Room 实体（便签：id, 内容, 排序位置, 创建时间, 颜色索引, 分类, 截止时刻）+ 分类表与 Deadline 倒计时纯函数 |
 | `data/NoteDao.kt` | 便签 DAO（按 position 查询、增删改、整表替换） |
 | `data/TimeAxis.kt` | 表格视图的时间轴：时间范围、每格几小时、课程块定位与重叠并排（含单测） |
-| `data/AppDatabase.kt` | Room 数据库单例（v5，含 2→3 / 3→4 / 4→5 迁移） |
+| `data/TodaySchedule.kt` | 「今天的课」纯计算：HH:mm → 今天时间戳、还剩几节、是否空闲（含单测） |
+| `data/TodayNotePicker.kt` | 今天页便签摘要挑选规则：5 条上限 / Deadline 优先 / 省略栏（含单测） |
+| `data/WeekSchedule.kt` | 周次工具：解析「周数」文本（范围 / 单双周）、换算学期周次（含单测） |
+| `data/TimetablePdfParser.kt` | 教务系统课表 PDF 解析（仅 `java.util.zip` + 正则，不引第三方 PDF 库，含单测） |
+| `data/AppDatabase.kt` | Room 数据库单例（v7，含 2→3 / 3→4 / 4→5 / 5→6 / 6→7 迁移） |
 | `ClassReminderService.kt` | 前台 Service：轮询检查课程、动态更新前台通知、发送提醒 |
 | `LockOverlayActivity.kt` | 锁屏覆盖 Activity |
 | `BootReceiver.kt` | 开机自启 BroadcastReceiver（带权限检查） |
-| `Prefs.kt` | SharedPreferences 封装（提醒时间、主题模式、开机自启等） |
+| `Prefs.kt` | SharedPreferences 封装（提醒时间、主题模式、开机自启、学期周次等） |
+
+## 测试
+
+纯逻辑（时间换算、周次解析、PDF 解析、便签挑选规则、高亮分级）都抽成不依赖 Android 的纯函数，配套 **111 个 JVM 单测**：
+
+| 测试 | 用例数 | 覆盖 |
+|---|---|---|
+| `TimeAxisTest` | 38 | 时间轴映射、重叠并排、整点刻度、斑马纹相位 |
+| `NoteTypeTest` | 21 | 分类表顺序、越界收敛、Deadline 倒计时七档 |
+| `TodayNotePickerTest` | 15 | 5 条上限、Deadline 优先、省略栏、不改入参 |
+| `TodayScheduleTest` | 15 | 今天的课换算、空闲判定边界、还剩几节 |
+| `GreetingTest` | 7 | 问候语五档区间与整点边界 |
+| `TimetablePdfParserTest` | 5 | 课表 PDF 解析（折行拼接、节次详情） |
+| `WeekScheduleTest` | 5 | 周次文本解析（范围 / 单双周 / 无法解析） |
+| `EmptyTodayTextTest` | 5 | 今天页空态标题与副文案三路分流 |
+
+```bash
+gradle testDebugUnitTest --offline
+```
 
 ## 更新日志
+
+### v4.2 — 今天页便签摘要的 5 条上限 · Deadline 优先 · 深色表格底纹
+
+M3 分支上的第三轮，四件事都围绕「今天页那几行便签摘要怎么读得更快」和「深色课表别糊成一片」。
+
+**1. 便签最多在今天显示 5 条**
+
+抽出纯函数 `data/TodayNotePicker.kt`：
+
+```kotlin
+object TodayNotePicker {
+    const val TODAY_NOTE_LIMIT = 5
+    fun pick(notes: List<NoteEntity>): List<NoteEntity> { … }      // 返回正文条
+    fun needsMoreRow(notes: List<NoteEntity>): Boolean = notes.size > TODAY_NOTE_LIMIT
+}
+```
+
+| 库中便签数 | 正文条数 | 「…」省略栏 | 合计栏位 |
+|---|---|---|---|
+| 0 | — | — | 0（整段不渲染） |
+| ≤ 5 | 全部 | 无 | `n` |
+| > 5 | 4 | 有 | **恒为 5** |
+
+**为什么超量时只留 4 条正文**：正好 5 条填满时，用户没法判断「到底还有没有」。留一格给省略栏，这件事就从「数一数」变成「看有没有那一栏」—— 一眼可辨。代价是超量时只看得到 4 条，但摘要区本来就不是用来看全的（旁边有「全部」入口）。
+
+**2. Deadline 类事件优先显示**
+
+```kotlin
+val ordered = notes.sortedBy { if (it.hasDeadline) 0 else 1 }
+```
+
+`sortedBy` 是**稳定排序**，同组内保持用户拖拽顺序，所以「急事上浮」和「我排的顺序别乱」两件事不冲突。
+
+`hasDeadline` 同时要求 `typeIndex` 属 Deadline 类 **且** `deadlineAt != null` —— 只选了分类却没填时刻的条目不算优先，因为倒计时画不出来，提上来也只是一句没有信息量的标题。
+
+**3. 省略栏是同格式的灰色栏位**
+
+不是另做一种控件，而是**逐项复刻** `NoteSummaryRow` 的几何（`padding(horizontal = 14.dp, vertical = 12.dp)`、竖线 `3.dp × 18.dp` + `RoundedCornerShape(2.dp)`、`Spacer(11.dp)`），只换三处颜色：
+
+| 元素 | 正文行 | 省略栏 |
+|---|---|---|
+| 底色 | `surface` | `surfaceVariant.copy(alpha = 0.4f)` |
+| 竖线 | 便签 accent 色 | `outlineVariant` |
+| 文字 | `onSurface` | `onSurfaceVariant`（内容为「…」） |
+
+实测：`…` 的 x 与其它便签文字**完全对齐（x=155）**，行高 62 与相邻行一致，五行 y 间距 1016→1229→1423→1598→1773（等差 175±12）—— 说明它读起来是「列表里的一格」，而不是「另一个按钮」。
+
+**4. 深色模式下调高课表底纹透明度**
+
+`MainScreen.kt` 新增一套深色专用常量：
+
+| 用途 | 浅色 alpha | 深色 alpha | 常量名 |
+|---|---|---|---|
+| 斑马纹（整列底） | `0.03` | **`0.06`** | `ZEBRA_ALPHA` / `_DARK` |
+| 横向网格线 | `0.08` | **`0.13`** | `GRID_LINE_ALPHA` / `_DARK` |
+| 纵向列分隔 | `0.05` | **`0.09`** | `GRID_COLUMN_ALPHA` / `_DARK` |
+
+**为什么深色要单独一套值**：底纹靠 `onSurface` 叠色实现。浅色主题里 `onSurface` 近黑，压在白底上是「深灰压白」；深色主题里它近白，压在近黑底上是「浅灰提黑」—— 同样 alpha，后者感知上弱得多。所以深色不是「也调 0.03」，而是给一组略高的值让两边的**观感**对齐，而不是让**数值**对齐。
+
+深浅判定沿用项目既有惯例 `surface.luminance() < 0.5f`（与 `notePalette()` 同一套逻辑），不引入第二套标准。
+
+**实机像素采样**（周三列 x=770 空白段，`build/preview/v22_grid_dark.png`）：
+
+| 位置 | RGB | 灰阶 |
+|---|---|---|
+| 无斑马纹底色 | `(18, 18, 18)` | 18 |
+| 有斑马纹处 | `(31, 31, 31)` | 31（+13） |
+| 网格线 | `(36, 38, 41)` | ~38（+7） |
+
++13 灰阶足以看出列带，又不至于让空白格比课程块还显眼。
+
+**顺手清掉的**：`TypeBadge` 的 `textColor` 参数从未被使用（调用方永远传 `accent`），删掉；多传一个参数只会让调用方纠结该传什么。
+
+**单测**：96 → **111 全绿**。新增 `TodayNotePickerTest`（15 例）：上限为 5、少于/正好等于/超过上限、不变量 `正文 + 省略栏 ≤ 5`、Deadline 优先、无时刻的 Deadline 不优先且不被丢到最后、超量时 Deadline 被保留、截尾、空输入、不修改入参。
+
+**验收页**：`build/preview/material3-preview-v2.2.html`（13 屏 + 9 张实机截图，新增 ⑫ 便签摘要规则 + ⑬ 深浅底纹并排对照）。
+
+**踩坑记录**：`LazyColumn` 的 content lambda 是 `LazyListScope`，**不是 `@Composable`**，里面不能调 `remember`。一开始把 `pickedNotes` / `showNotesMore` 写在 `items(...)` 之间，报 `@Composable invocations can only happen from the context of a @Composable function`。修法是把两个 `remember` 提到 `LazyColumn` **之外**，lambda 里只引用算好的值。
+
+### v4.1 — 加号三项菜单 · 便签分类与 Deadline 倒计时 · 今天页空闲态
+
+M3 分支上的第二轮迭代，围绕「打开 App 就知道现在该干什么、以及什么快到期了」。
+
+**1. 加号按钮改成展开式菜单**
+
+`FAB` 点击不再是「新建课程」这一个动作。今天页现在有两条入口，行为按当前 Tab 分流：
+
+| 当前 Tab | 加号点击后 |
+|---|---|
+| 今天 | 展开三项：**添加便签 / 临时提醒 / 长期提醒** |
+| 课表 | 展开两项：**临时提醒 / 长期提醒** |
+| 便签 | 直接新建便签（不展开菜单） |
+
+菜单用 `AnimatedContent(targetState = selectedTab != 2 && fabExpanded)` 承载，方块自下而上错峰入场；`FAB` 图标本身旋 45° 变成 **×**。切 Tab 时**无条件** `fabExpanded = false`，避免菜单跨页残留。
+
+**2. 便签分类（位置在颜色选择器下方）**
+
+`NoteEntity` 新增三个字段：
+
+```kotlin
+val typeIndex: Int = NOTE_TYPE_NONE   // 分类下标，默认 0 = 空
+val customLabel: String = ""          // 自定义类才用
+val deadlineAt: Long = 0L             // 0 = 没设截止
+```
+
+分类表**顺序即下标**，共 7 项：
+
+| typeIndex | 分类 | 可改名 | 带 Deadline |
+|---|---|---|---|
+| 0 | 空（默认） | — | — |
+| 1 | 工作 | — | — |
+| 2 | 生活 | — | — |
+| 3 | 学习 | — | — |
+| 4 | Deadline | — | ✓ |
+| 5 | 自定义 | ✓ | — |
+| 6 | Deadline 自定义 | ✓ | ✓ |
+
+**为什么存下标 + 语义 `kind`，而不是直接存字符串**：下标便于将来插入新分类、也便于多语言；行为分支（要不要显示倒计时、名字能不能改）由 `NoteTypeKind`（`NONE` / `GENERAL` / `DEADLINE`）决定，收在一处而不是散在各个 `if (label == "Deadline")` 里。
+
+`sanitizeType()` 归一三种脏组合：下标越界收敛到合法范围、非自定义类清空 `customLabel`、非 Deadline 类把 `deadlineAt` 清零。
+
+**3. Deadline 的显示**
+
+两个纯函数（`NoteEntity.kt`）：
+
+- `deadlineTimeLabel(deadlineAt, now)` —— 同年 `M/d HH:mm`，跨年 `yyyy/M/d HH:mm`
+- `deadlineCountdown(deadlineAt, now)` —— `已过期` / `已过期 N 天` / `即将到期` / `N 分钟后` / `N 小时 M 分后` / `N 天后` / `N 个月后`
+
+「今天」页的便签摘要行和「便签」页的每一行，**右侧**都会出现徽章列：
+- 一般分类 → 只显示分类名（`TypeBadge`，`accent` α14% 底 + 同色字）
+- Deadline 类 → 再叠一层 `DeadlineBadge`（时刻 + 倒计时），**过期用 `scheme.error` 红色**，否则用当前便签的 accent 色
+
+收成一个纯函数是为了能单测 —— 时间文案最容易踩边界（正好到点算不算过期），埋在 Composable 里就只能靠实机肉眼看。
+
+**4. 便签拖拽时误现的蓝色编辑按钮**
+
+`NoteListView` 里拖拽便签时，手势落点会穿透到底层行的 `editButton` 上。把编辑按钮整层包进：
+
+```kotlin
+AnimatedVisibility(visible = !dragging, enter = fadeIn(tween(EXIT_MS)), exit = fadeOut(tween(EXIT_MS)))
+```
+
+拖拽中淡出、松手淡入，蓝色方块不再闪出来。
+
+**5. 今天页视觉调整**
+
+- 问候语 `fontSize = 34.sp` + `FontWeight.SemiBold` + `lineHeight = 42.sp`（此前约 26sp），顶栏 `padding` 同步加大到 `top 14 / bottom 16`。实测高度从约 102px → **129px**。
+- 新增**空闲态主卡**：当前时间还没进设置里的预警窗时，主文本显示「**当前空闲**」，下方小字显示「距离下一件事 N 小时后」。判定落在 `TodaySchedule.isIdle(upcoming, now, advanceMinutes)`，三条必要条件缺一不可：
+  1. 现在没有课正在进行（有课就是「正在上课」）
+  2. 今天还有没上完的课（全上完是另一种状态）
+  3. 离最近那节还没开始的课，间隔**严格大于**预警窗口
+
+  **边界取严格大于**：正好剩 30 分钟而预警也是 30 分钟时，提醒业务已经开始提示了，不该同时说「空闲」——那两句是矛盾的。
+- 空态卡标题变成「**今天的课上完了 🎉**」（上完了值得祝贺一下）。
+- 副文案「好好休息，或者看看便签」→ 补句号，且**仅在存在便签时显示**；有课但没便签改为「**放松一下吧！**」；今天压根没课仍走「享受闲暇的一天」（「上完了」和「本来就没有」是两种状态，措辞要分开）。
+- 主卡**有课时保持原有配色**：`FeaturedClassCard` 去掉了 `animateColorAsState`，改成 `if (ongoing) scheme.primary else scheme.surfaceVariant`，避免颜色在页面上停留时来回跳。
+
+**数据库迁移**：`version 6 → 7`，`MIGRATION_6_7` 三条 `ALTER TABLE ... ADD COLUMN ... NOT NULL DEFAULT`。注意**声明必须与 Entity 逐字一致**（类型 / NOT NULL / 默认值），否则 Room 打开库时 schema 校验会失败。
+
+**单测**：85 → **96 全绿**。新增
+- `NoteTypeTest`（21）：分类表顺序、越界收敛、`typeLabel` 四种情形、`hasDeadline` 三种情形、倒计时七个档位（含「正好到点算过期」）、时刻格式化同年/跨年/补零
+- `TodayScheduleTest` 追加 6 例：有课进行中 / 全上完 / 无课 / 间隔大于窗口 / **边界正好等于窗口** / 窗口为 0 与负数兜底
+- `EmptyTodayTextTest`（5）：空态标题与副文案的三路分流，含句号与「今天没课时不看便签」的规则
+
+**验收页**：`build/preview/material3-preview-v2.1.html`（11 屏 + 8 张实机截图对照 + 规则速查表；浅色/深色可切）。
+
+**踩坑记录**：`import androidx.compose.material3.*` 通配导入后，`DatePickerDialog(...)` 会被优先解析成 material3 的同名 `@Composable`（参数表完全不同），报一串 `Type mismatch: inferred type is Context but () -> Unit was expected`。修法是**别名导入**：
+
+```kotlin
+import android.app.DatePickerDialog as SysDatePickerDialog
+import android.app.TimePickerDialog as SysTimePickerDialog
+```
 
 ### v4.0 — 全新 Material 3 界面（分支 `redesign-material3`）
 
@@ -633,3 +835,5 @@ assembleDebug 成功，单测 **46 个**全绿（27 + 5 + 9 + 5）。
 1. 在 Android Studio 中打开此项目。
 2. 等待 Gradle 导入完成并构建。
 3. 在 Android 设备或模拟器上运行（最低 Android 5.0，目标 Android 14）。
+
+> **构建环境**：本项目锁定 **Gradle 8.4 + JDK 17**（AGP 8.1.1 与 Gradle 9.x 不兼容，会报 `NoSuchMethodError: DependencyHandler.module`；JDK 21 下 kapt 会报 `module jdk.compiler does not export com.sun.tools.javac.main`）。依赖已缓存，可加 `--offline` 离线构建。

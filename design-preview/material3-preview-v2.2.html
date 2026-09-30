@@ -1,0 +1,1540 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClassReminder · Material 3 新界面验收 v2.2</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   ClassReminder Material 3 验收页（v2.2）
+   —— 1:1 复刻 app/src/main/java/com/example/classreminder/ui/
+      Theme.kt + TodayScreen.kt + MainScreen.kt 的视觉输出
+   配色取自 Theme.kt 中新的 Google 标准蓝方案
+   ═══════════════════════════════════════════════════════════════ */
+
+:root{
+  /* ── 浅色（Google 灰阶 + Google Blue） ── */
+  --primary:#1A73E8;
+  --on-primary:#FFFFFF;
+  --primary-container:#D3E3FD;
+  --on-primary-container:#0B2E6B;
+  --secondary:#F9AB00;
+  --secondary-container:#FEEFC3;
+  --tertiary:#188038;
+  --background:#F8F9FA;
+  --on-background:#1F1F1F;
+  --surface:#FFFFFF;
+  --on-surface:#1F1F1F;
+  --surface-variant:#F1F3F4;
+  --on-surface-variant:#5F6368;
+  --outline:#80868B;
+  --outline-variant:#DADCE0;
+  --error:#D93025;
+
+  /* 便签调色盘（浅色）：与 Compose NotePaletteLight 一致 —— 共 6 色 */
+  --note-red:#D93025;
+  --note-blue:#1A73E8;
+  --note-green:#188038;
+  --note-yellow:#F9AB00;
+  --note-purple:#8430CE;
+  --note-gray:#5F6368;
+
+  --card-radius:14px;
+  --small-radius:8px;
+  --shape-chip:999px;
+}
+:root.dark{
+  --primary:#8AB4F8;
+  --on-primary:#0D2D62;
+  --primary-container:#1A3D7C;
+  --on-primary-container:#D3E3FD;
+  --secondary:#FDD663;
+  --secondary-container:#5C4500;
+  --tertiary:#81C995;
+  --background:#121212;
+  --on-background:#E8EAED;
+  --surface:#1E1E1E;
+  --on-surface:#E8EAED;
+  --surface-variant:#2A2B2D;
+  --on-surface-variant:#9AA0A6;
+  --outline:#5F6368;
+  --outline-variant:#3C4043;
+  --error:#F28B82;
+
+  /* 便签调色盘（深色）：与 Compose NotePaletteDark 一致 —— 每个色相提亮一档 */
+  --note-red:#F28B82;
+  --note-blue:#8AB4F8;
+  --note-green:#81C995;
+  --note-yellow:#FDD663;
+  --note-purple:#C58AF9;
+  --note-gray:#9AA0A6;
+}
+
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  background:#0E1116;
+  font-family:"Google Sans","Roboto","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  color:#E8EAED;
+  padding:28px 20px 60px;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ── 页面头 ── */
+.page-head{max-width:1180px;margin:0 auto 22px}
+.page-head h1{font-size:22px;font-weight:500;margin:0 0 6px;letter-spacing:.2px}
+.page-head p{margin:0;font-size:13px;color:#9AA0A6;line-height:1.6}
+.page-head .tag{
+  display:inline-block;margin-top:10px;padding:3px 10px;border-radius:999px;
+  background:rgba(138,180,248,.15);color:#8AB4F8;font-size:11px;font-weight:500;
+}
+.toolbar{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+.toolbar button{
+  font:inherit;font-size:12px;padding:7px 15px;border-radius:999px;cursor:pointer;
+  border:1px solid #3C4043;background:#1E1E1E;color:#E8EAED;transition:.15s;
+}
+.toolbar button:hover{background:#2A2B2D}
+.toolbar button.on{background:#8AB4F8;color:#0D2D62;border-color:#8AB4F8;font-weight:500}
+
+/* ── 手机网格 ── */
+.stage{
+  max-width:1180px;margin:0 auto;
+  display:flex;gap:26px;flex-wrap:wrap;justify-content:center;
+}
+.phone-wrap{display:flex;flex-direction:column;align-items:center;gap:10px}
+.phone-label{font-size:12.5px;color:#9AA0A6;font-weight:500;letter-spacing:.3px}
+.phone-label b{color:#8AB4F8;font-weight:600}
+
+/* 设备外框 —— 走 1:1 复刻 Compose 主题的容器 */
+.phone{
+  width:328px;height:678px;border-radius:30px;overflow:hidden;
+  border:1px solid #2A2B2D;position:relative;
+  display:flex;flex-direction:column;
+  background:var(--background);color:var(--on-background);
+  transition:background .2s,color .2s;
+  box-shadow:0 18px 50px rgba(0,0,0,.55);
+}
+
+/* ── 状态栏占位 ── */
+.statusbar{
+  height:26px;flex:none;display:flex;align-items:center;justify-content:space-between;
+  padding:0 18px;font-size:10.5px;color:var(--on-surface-variant);
+  background:var(--surface);
+}
+
+/* ── 顶栏 ── */
+.topbar{flex:none;background:var(--surface);padding:8px 20px 10px}
+.topbar .title{font-size:20px;font-weight:500;line-height:1.25;color:var(--on-surface)}
+/* v2.1：今天页顶栏问候语 28sp → 34sp 且 Medium → SemiBold（用户要求「增大并加粗」）。
+   这里是独立的类而不是改 .title —— 便签页那个 TopAppBar 的「快速便签」仍是 20px。 */
+.topbar.greeting .title{font-size:34px;font-weight:600;line-height:1.24}
+.topbar.greeting{padding-top:14px;padding-bottom:16px}
+.topbar .sub{font-size:11.5px;color:var(--on-surface-variant);margin-top:2px}
+.topbar.with-search{display:flex;align-items:center;gap:10px;padding:10px 16px}
+.searchbox{
+  flex:1;display:flex;align-items:center;gap:8px;
+  border:1.5px solid color-mix(in srgb,var(--on-surface) 25%,transparent);
+  border-radius:6px;padding:7px 10px;font-size:12.5px;color:var(--on-surface-variant);
+}
+.searchbox svg{flex:none;opacity:.65}
+.topbar.with-search .iconbtn{
+  width:30px;height:30px;border-radius:50%;display:grid;place-items:center;
+  color:var(--on-surface-variant);cursor:pointer;
+}
+
+/* ── 内容滚动区 ── */
+.content{flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 16px 12px}
+.content.grid-mode{padding:4px 4px 12px}
+.content::-webkit-scrollbar{width:0}
+
+/* ── 主卡（今天页） ── */
+.featured{
+  border-radius:var(--card-radius);padding:16px;margin-top:4px;
+  background:var(--surface-variant);cursor:pointer;
+  transition:background .2s;
+}
+.featured.ongoing{background:var(--primary);color:var(--on-primary)}
+.featured .st{display:flex;align-items:center;gap:8px}
+.featured .dot{width:7px;height:7px;border-radius:50%;background:var(--primary)}
+.featured.ongoing .dot{background:var(--on-primary)}
+.featured .st-text{font-size:12px;font-weight:500;color:var(--primary)}
+.featured.ongoing .st-text{color:var(--on-primary)}
+.featured .ftitle{font-size:19px;font-weight:500;line-height:1.35;margin-top:10px;color:var(--on-surface)}
+.featured.ongoing .ftitle{color:var(--on-primary)}
+.featured .fsub{font-size:12.5px;margin-top:5px;color:var(--on-surface-variant)}
+.featured.ongoing .fsub{color:color-mix(in srgb,var(--on-primary) 85%,transparent)}
+
+/* ── 小节标题 ── */
+.section{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 4px 2px;font-size:12px;font-weight:500;color:var(--on-surface-variant);
+}
+.section .more{color:var(--primary);cursor:pointer}
+
+/* ── 通用卡（时间轴行 / 便签摘要） ── */
+.row-card{
+  display:flex;align-items:center;gap:0;
+  border:1px solid var(--outline-variant);border-radius:var(--card-radius);
+  background:var(--surface);padding:12px 14px;margin-bottom:8px;cursor:pointer;
+  transition:background .15s;
+}
+.row-card:hover{background:color-mix(in srgb,var(--primary) 4%,var(--surface))}
+.row-card .time{
+  width:46px;flex:none;font-size:13.5px;font-weight:500;color:var(--primary);
+}
+.row-card .body{flex:1;min-width:0}
+.row-card .rtitle{
+  font-size:13.5px;font-weight:500;color:var(--on-surface);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.row-card .rsub{
+  font-size:11.5px;color:var(--on-surface-variant);margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.temp-badge{
+  flex:none;margin-left:8px;background:var(--secondary);color:var(--on-primary);
+  font-size:9.5px;font-weight:500;padding:1.5px 7px;border-radius:var(--shape-chip);
+}
+:root.dark .temp-badge{color:#3C2C00}
+.note-card{
+  display:flex;align-items:center;gap:11px;
+  border:1px solid var(--outline-variant);border-radius:var(--card-radius);
+  background:var(--surface);padding:12px 14px;margin-bottom:8px;cursor:pointer;
+}
+.note-card .bar{width:3px;height:18px;border-radius:2px;background:var(--note-color,var(--primary));flex:none}
+.note-card .ntext{
+  font-size:12.5px;color:var(--on-surface);flex:1 1 auto;min-width:0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+/* v2.1：文字缩到单行后，右侧徽章列紧贴右边 —— 与 Compose 里 noteRow 的 weight(1f) + 右侧 Column 一致 */
+.note-card .badges{max-width:46%}
+
+/* ── 空态卡 ── */
+.empty-card{
+  border-radius:var(--card-radius);background:var(--surface-variant);
+  padding:16px;margin-top:4px;
+}
+.empty-card h3{margin:0;font-size:17px;font-weight:500;color:var(--on-surface)}
+.empty-card p{margin:5px 0 0;font-size:12.5px;color:var(--on-surface-variant)}
+
+/* ═══ 课表页 ═══ */
+.weekhead{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:6px 12px 8px;
+}
+.weeknav{display:flex;align-items:center;gap:4px}
+.weeknav .arrow{
+  width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
+  color:var(--on-surface-variant);cursor:pointer;
+}
+.weeknav .wk{font-size:13px;font-weight:500;color:var(--on-surface);padding:0 2px}
+.weeknav .wk small{font-weight:400;color:var(--on-surface-variant);font-size:10.5px;margin-left:4px}
+
+/* 表格 / 列表 切换 —— 原版滑块式（对齐 WeekModeSwitch）
+   底：onSurface 6% 圆角 8dp，内缩 2dp
+   滑块：primary 实心、圆角 6dp，tween(200) 平移
+   文字：选中 onPrimary+Bold / 未选中 onSurface@70%+Normal */
+.seg{
+  display:inline-flex;position:relative;flex:none;
+  border-radius:8px;background:color-mix(in srgb,var(--on-surface) 6%,transparent);
+  padding:2px;
+}
+.seg .pill{
+  position:absolute;top:2px;bottom:2px;width:60px;border-radius:6px;
+  background:var(--primary);transition:transform .2s cubic-bezier(.2,0,0,1);
+}
+.seg .seg-item{
+  position:relative;z-index:1;width:60px;display:grid;place-items:center;
+  padding:5px 0;font-size:12px;font-weight:400;
+  color:color-mix(in srgb,var(--on-surface) 70%,transparent);
+  cursor:pointer;transition:color .2s;
+}
+.seg .seg-item.active{color:var(--on-primary);font-weight:700}
+
+/* 网格 */
+.grid-scroll{overflow-x:auto;padding-bottom:4px}
+.grid-scroll::-webkit-scrollbar{height:0}
+.grid{
+  display:grid;min-width:100%;
+  grid-template-columns:32px repeat(5,1fr);
+  gap:0;
+}
+.gh{
+  height:42px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  font-size:11.5px;font-weight:600;color:var(--on-surface-variant);
+  background:transparent;border-bottom:1px solid var(--outline-variant);
+  letter-spacing:.2px;cursor:pointer;position:relative;
+}
+.gh.today{color:var(--primary)}
+.gh.today .hbadge{
+  font-size:8.5px;font-weight:500;color:var(--primary);
+  background:color-mix(in srgb,var(--primary) 12%,transparent);
+  border-radius:999px;padding:0 5px;margin-top:1px;line-height:1.5;
+}
+.gh.hl{background:color-mix(in srgb,var(--primary) 9%,transparent)}
+.gh.hl.today{background:color-mix(in srgb,var(--primary) 14%,transparent)}
+
+.gcol{
+  position:relative;height:330px;
+  border-right:1px solid color-mix(in srgb,var(--outline) 12%,transparent);
+  background-image:
+    repeating-linear-gradient(to bottom,
+      transparent 0 32px,
+      color-mix(in srgb,var(--outline) 8%,transparent) 32px 33px),
+    repeating-linear-gradient(to bottom,
+      color-mix(in srgb,var(--outline) 3%,transparent) 0 33px,
+      transparent 33px 66px);
+}
+.gcol:last-child{border-right:none}
+.gcol.today{background-color:color-mix(in srgb,var(--primary) 4%,transparent)}
+.gcol.hl{background-color:color-mix(in srgb,var(--primary) 7%,transparent)}
+.axis{position:relative;height:330px;font-size:10px;color:var(--on-surface-variant);font-weight:700}
+.axis span{position:absolute;right:4px;transform:translateY(-50%)}
+
+/* 课程块 */
+.block{
+  position:absolute;left:2px;right:2px;border-radius:var(--small-radius);
+  background:var(--surface);border:.75px solid var(--outline-variant);
+  overflow:hidden;cursor:pointer;padding:4px 5px 4px 9px;
+  transition:transform .12s,box-shadow .15s,border-color .15s,background .15s;
+}
+.block .accent{
+  position:absolute;left:0;top:0;bottom:0;width:2px;border-radius:2px 0 0 2px;
+  background:color-mix(in srgb,var(--primary) 55%,transparent);
+}
+.block.temp{border-style:dashed}
+.block.temp .accent{background:var(--secondary)}
+.block .bt{font-size:10.5px;font-weight:500;line-height:1.25;color:var(--on-surface);
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.block .br{font-size:9.5px;color:var(--on-surface-variant);margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.block:hover{transform:scale(1.02);border-color:color-mix(in srgb,var(--primary) 45%,var(--outline-variant))}
+/* 选中态：今日列走蓝，非今日列走灰 */
+.block.sel{
+  transform:scale(1.05);z-index:3;
+  border:1.5px solid color-mix(in srgb,var(--primary) 80%,transparent);
+  background:color-mix(in srgb,var(--primary) 12%,var(--surface));
+  box-shadow:0 0 0 5px color-mix(in srgb,var(--primary) 17%,transparent);
+}
+.block.sel .accent{width:3px;background:var(--primary)}
+.gcol:not(.today) .block.sel{
+  border-color:color-mix(in srgb,var(--outline) 80%,transparent);
+  background:color-mix(in srgb,var(--outline) 10%,var(--surface));
+  box-shadow:0 0 0 5px color-mix(in srgb,var(--outline) 15%,transparent);
+}
+.gcol:not(.today) .block.sel .accent{background:var(--outline)}
+:root.dark .block.sel{background:color-mix(in srgb,var(--primary) 22%,var(--surface))}
+:root.dark .gcol:not(.today) .block.sel{background:color-mix(in srgb,var(--outline) 22%,var(--surface))}
+
+/* 选中详情卡 */
+.detail{
+  display:none;margin:10px 8px 0;border:1px solid color-mix(in srgb,var(--primary) 45%,transparent);
+  border-radius:var(--card-radius);background:var(--surface);overflow:hidden;
+  animation:slideDown .22s cubic-bezier(.2,0,0,1);
+}
+.detail.show{display:flex}
+.detail.gray{border-color:color-mix(in srgb,var(--outline) 45%,transparent)}
+.detail .dbar{width:4px;flex:none;background:var(--primary)}
+.detail.gray .dbar{background:var(--outline)}
+.detail .dbody{flex:1;padding:12px 14px;min-width:0}
+.detail .dt{font-size:14px;font-weight:500;color:var(--on-surface);line-height:1.35}
+.detail .ds{font-size:11.5px;color:var(--on-surface-variant);margin-top:3px}
+.detail .dside{
+  display:flex;align-items:center;gap:2px;
+  padding:8px 8px 8px 0;flex:none;
+}
+/* 两个 34dp 图标按钮：编辑（铅笔，主色）+ 关闭（×，次级色）
+   对应 Compose 里的 IconButton(size=34.dp) + Icon(size=18.dp) */
+.detail .dicon{
+  width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
+  color:var(--on-surface-variant);cursor:pointer;transition:background .15s;
+}
+.detail .dicon:hover{background:var(--surface-variant)}
+.detail .dicon.edit{color:var(--primary)}
+.detail .dicon svg{width:18px;height:18px;fill:none;stroke:currentColor;
+  stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+@keyframes slideDown{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+
+/* ═══ 便签页 ═══ */
+.note-item{
+  display:flex;align-items:center;gap:12px;
+  height:60px;padding:0 12px;margin-bottom:8px;
+  border:1px solid var(--outline-variant);border-radius:var(--card-radius);
+  background:var(--surface);cursor:pointer;transition:.15s;
+}
+.note-item:hover{background:var(--surface-variant)}
+.note-item.sel{border:1.5px solid var(--primary);background:color-mix(in srgb,var(--primary) 10%,var(--surface))}
+.note-item .nbody{flex:1;min-width:0}
+.note-item .ntxt{font-size:13.5px;color:var(--on-surface);line-height:1.4}
+.note-item .nmeta{font-size:10.5px;color:var(--on-surface-variant);margin-top:3px}
+
+/* ═══ 设置页 ═══ */
+.set-title{font-size:20px;font-weight:500;padding:8px 20px 10px;color:var(--on-surface);background:var(--surface)}
+.set-card{
+  --set-card-bg:color-mix(in srgb,var(--surface-variant) 55%,var(--surface));
+  border:1px solid var(--outline-variant);border-radius:var(--card-radius);
+  background:var(--set-card-bg);
+  padding:14px 16px;margin-bottom:10px;
+}
+.set-card .clabel{font-size:11.5px;font-weight:500;color:var(--primary);margin-bottom:10px}
+.switch-row{display:flex;align-items:center;justify-content:space-between;padding:7px 0}
+/* 只作用于左侧标签 —— 别用 `.switch-row span`，那样会把右侧的开关也一起命中了 */
+.switch-row>span:first-child{font-size:14px;color:var(--on-surface)}
+/* 开关（Switch）—— 类名用 .switch，不要和调色盘的 .swatch 撞车：
+   早先两者都叫 .sw，后定义的那个（调色盘的 flex:1/1 + aspect-ratio:1/1 + border-radius:50%）
+   会把开关的 44×24 胶囊形冲成被拉伸的圆点，整个设置页的开关都变形了。
+   尺寸按 M3 官方规格：轨道 52×32dp、滑块 24dp、行程 20dp。 */
+.switch{width:52px;height:32px;border-radius:999px;background:var(--surface-variant);position:relative;flex:none;cursor:pointer;transition:background .2s}
+.switch i{position:absolute;top:4px;left:4px;width:24px;height:24px;border-radius:50%;background:var(--outline);transition:.2s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.switch.on{background:var(--primary)}
+.switch.on i{left:24px;background:var(--on-primary)}
+
+/* 设置页：数值输入框（OutlinedTextField）+ 说明小字 + 整宽按钮 */
+.num-field{
+  border:1.6px solid var(--outline);border-radius:6px;padding:6px 11px 7px;position:relative;
+}
+.num-field .lbl{
+  position:absolute;top:-9px;left:9px;padding:0 5px;font-size:11px;
+  color:var(--on-surface-variant);background:var(--set-card-bg,var(--surface));
+}
+.num-field .v{font-size:15px;color:var(--on-surface)}
+.field-hint{font-size:11px;color:var(--on-surface);opacity:.5;padding:4px 0 0 4px}
+.field-hint.block{padding:2px 0 0 4px;line-height:1.6}
+.pill-btn{
+  display:block;width:100%;text-align:center;box-sizing:border-box;
+  border:0;border-radius:999px;padding:10px 0;font-size:14px;font-weight:500;
+  background:var(--primary);color:var(--on-primary);cursor:pointer;margin-top:10px;
+}
+.pill-btn.outlined{
+  background:transparent;color:var(--primary);
+  border:1.4px solid var(--outline);margin-top:8px;
+}
+.radio-row{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:14px;color:var(--on-surface);cursor:pointer}
+/* 选中的那一行铺一层淡主色（对齐 Compose 的 primary α0.08 + RoundedCornerShape(6dp)） */
+.radio-row.on{background:color-mix(in srgb,var(--primary) 8%,transparent);border-radius:6px;padding-left:4px;padding-right:4px}
+.radio{width:18px;height:18px;border-radius:50%;border:2px solid var(--outline);flex:none;display:grid;place-items:center}
+.radio.on{border-color:var(--primary)}
+.radio.on::after{content:"";width:9px;height:9px;border-radius:50%;background:var(--primary)}
+.link-row{display:flex;align-items:center;justify-content:space-between;padding:9px 0;font-size:14px;color:var(--on-surface);cursor:pointer}
+.link-row .sub{font-size:10.5px;color:var(--on-surface-variant);margin-top:2px}
+
+/* ═══ 底栏 ═══ */
+.bottombar{flex:none;background:var(--surface)}
+.statusrow{
+  display:flex;align-items:center;gap:7px;padding:5px 16px;
+  background:color-mix(in srgb,var(--surface-variant) 45%,var(--surface));
+  font-size:10.5px;color:var(--on-surface-variant);
+  border-top:1px solid var(--outline-variant);
+}
+.statusrow .sdot{width:6px;height:6px;border-radius:50%;background:#4CAF50;flex:none}
+.navbar{display:flex;padding:6px 0 8px}
+.navitem{
+  flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
+  font-size:10.5px;color:var(--on-surface-variant);cursor:pointer;
+}
+.navitem .pill{
+  width:56px;height:28px;border-radius:999px;display:grid;place-items:center;
+  transition:background .2s;
+}
+.navitem.active{color:var(--primary);font-weight:500}
+.navitem.active .pill{background:var(--primary-container);color:var(--on-primary-container)}
+
+/* ── FAB ── */
+.fab{
+  position:absolute;right:16px;bottom:74px;width:52px;height:52px;border-radius:16px;
+  background:var(--primary);color:var(--on-primary);display:grid;place-items:center;
+  box-shadow:0 4px 12px rgba(0,0,0,.25);cursor:pointer;z-index:5;
+  transition:transform .2s cubic-bezier(.2,0,0,1), bottom .2s cubic-bezier(.2,0,0,1);
+}
+.fab.hidden{display:none}
+/* 选中课程后详情条弹出，FAB 同步上移。
+   Compose 侧常量 DETAIL_BAR_LIFT = 80dp → js 里按键换算写进 --lift（见 syncFabLift）。*/
+.fab.lifted{bottom:calc(74px + var(--lift, 190px))}
+/* 注：加号菜单项 .fab-tile 的样式统一放在 v2.1 那一段（见下方「加号三项菜单」），
+   这里曾有一份 v2.0 遗留的同名死样式（HTML 里从未用到），已删除以免覆盖。 */
+
+/* 图标 */
+svg{display:block}
+.ic{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.9;
+  stroke-linecap:round;stroke-linejoin:round}
+.ic-sm{width:14px;height:14px}
+
+/* ══════════ v2.0 新增：便签编辑对话框 + 8 色调色盘 ══════════ */
+.dlg-scrim{
+  position:absolute;inset:0;background:rgba(0,0,0,.42);
+  display:flex;align-items:center;justify-content:center;padding:0 22px;z-index:40;
+}
+.dlg{
+  width:100%;background:var(--surface-variant);
+  border-radius:26px;padding:20px 22px 16px;
+  box-shadow:0 8px 28px rgba(0,0,0,.4);
+}
+.dlg-title{font-size:19px;font-weight:600;color:var(--on-surface);margin-bottom:16px}
+.dlg-field{
+  border:1.6px solid var(--primary);border-radius:6px;padding:9px 11px;
+  min-height:64px;position:relative;background:transparent;
+}
+.dlg-field .lbl{
+  position:absolute;top:-9px;left:9px;padding:0 5px;font-size:11px;
+  color:var(--primary);background:var(--surface-variant);
+}
+.dlg-field .val{font-size:15px;color:var(--on-surface);line-height:1.35}
+.dlg-sublabel{font-size:12px;color:var(--on-surface-variant);margin:16px 0 9px}
+
+/* 调色盘：8 个等宽圆点（.swatch，别用 .sw —— 会和上面的开关撞名） */
+.palette{display:flex;gap:8px}
+.swatch{
+  flex:1 1 0;aspect-ratio:1/1;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  border:2px solid transparent;cursor:pointer;transition:transform .12s;
+}
+.swatch:active{transform:scale(.93)}
+.swatch.sel{border-color:rgba(232,234,237,.55)}
+.swatch svg{width:15px;height:15px;stroke-width:2.6;fill:none;stroke-linecap:round;stroke-linejoin:round}
+
+.dlg-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:22px}
+.dlg-btn{
+  border:0;background:transparent;font-size:14px;font-weight:600;
+  padding:9px 16px;border-radius:999px;cursor:pointer;
+}
+.dlg-btn.text{color:var(--primary)}
+.dlg-btn.filled{background:var(--primary);color:var(--on-primary)}
+
+/* 全时段问候语对照表 */
+.greet-table{
+  width:100%;max-width:520px;border-collapse:collapse;margin-top:8px;
+  font-size:13px;color:var(--on-surface);background:var(--surface);
+  border:1px solid var(--outline-variant);border-radius:12px;overflow:hidden;
+}
+.greet-table th,.greet-table td{
+  padding:9px 14px;text-align:left;border-bottom:1px solid var(--outline-variant);
+}
+.greet-table th{background:var(--surface-variant);font-weight:600;font-size:12px;color:var(--on-surface-variant)}
+.greet-table tr:last-child td{border-bottom:0}
+.greet-table code{font-size:12px;color:var(--primary)}
+.greet-wrap{display:flex;flex-direction:column;align-items:center;padding:6px}
+
+/* ══════════ v2.1 新增：加号三项菜单 / 分类芯片 / Deadline 徽章 / 空闲卡 ══════════ */
+
+/* FAB 展开后的三项菜单：方块自下而上错开，对齐 Compose 里 AnimatedContent 的位移 */
+.fab-menu{position:absolute;right:16px;bottom:96px;display:flex;flex-direction:column;align-items:flex-end;gap:12px;z-index:30}
+.fab-tile{
+  display:flex;align-items:center;gap:12px;
+  background:var(--surface-variant);color:var(--on-surface);
+  border-radius:16px;padding:11px 16px 11px 13px;
+  box-shadow:0 3px 12px rgba(0,0,0,.35);
+  font-size:13.5px;font-weight:500;white-space:nowrap;
+}
+.fab-tile .fic{
+  width:17px;height:17px;stroke:var(--on-surface-variant);stroke-width:2;
+  fill:none;stroke-linecap:round;stroke-linejoin:round;flex:none;
+}
+.fab-tile.primary{background:var(--primary);color:var(--on-primary)}
+.fab-tile.primary .fic{stroke:var(--on-primary)}
+.fab.open .ic{transform:rotate(45deg)}
+.fab .ic{transition:transform .2s}
+
+/* 便签分类芯片：两行固定分组（一般分类 / Deadline 与自定义） */
+.chiprow{display:flex;flex-wrap:wrap;gap:7px}
+.chiprow+.chiprow{margin-top:7px}
+.chip{
+  display:inline-flex;align-items:center;gap:5px;
+  border:1.4px solid var(--outline);border-radius:999px;
+  padding:5px 12px;font-size:12.5px;color:var(--on-surface-variant);
+  background:transparent;cursor:pointer;transition:transform .12s;
+}
+.chip:active{transform:scale(.95)}
+.chip.sel{border-color:transparent;background:var(--primary);color:var(--on-primary);font-weight:600}
+.chip.sel svg{width:12px;height:12px;stroke:var(--on-primary);stroke-width:3;fill:none;stroke-linecap:round;stroke-linejoin:round}
+
+/* Deadline 字段：两个选时按钮 + 清除 + 预览行 */
+.dl-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.dl-btn{
+  border:1.4px solid var(--outline);background:transparent;color:var(--on-surface);
+  border-radius:999px;padding:7px 15px;font-size:12.5px;font-weight:500;cursor:pointer;
+}
+.dl-btn.clear{border-color:transparent;color:var(--primary);margin-left:auto}
+.dl-preview{
+  margin-top:9px;font-size:12.5px;color:var(--primary);
+  display:flex;align-items:center;gap:7px;
+}
+.dl-preview .dot{width:5px;height:5px;border-radius:50%;background:var(--primary);flex:none}
+.dl-preview.expired{color:var(--error)}
+.dl-preview.expired .dot{background:var(--error)}
+
+/* 便签行右侧的分类 / Deadline 徽章 —— 对齐 TypeBadge 与 DeadlineBadge */
+.badges{display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex:none;margin-left:10px}
+.badge-type{
+  font-size:11px;font-weight:600;padding:3px 9px;border-radius:8px;
+  background:color-mix(in srgb, var(--primary) 16%, transparent);color:var(--primary);
+  white-space:nowrap;
+}
+.badge-dl{
+  font-size:11px;line-height:1.35;text-align:right;
+  color:var(--primary);white-space:nowrap;
+}
+.badge-dl.expired{color:var(--error)}
+.badge-dl b{font-weight:600}
+
+/* 「当前空闲」主卡：tertiary 圆点 + 主文本 + 剩余时长小字 */
+.featured.idle{background:var(--surface-variant);color:var(--on-surface)}
+.featured.idle .st-text{color:var(--tertiary)}
+.featured.idle .st .dot{background:var(--tertiary)}
+.featured.idle .fsub{color:var(--on-surface-variant)}
+
+/* 加号菜单里的图标画布 */
+.fic-w{width:20px;height:20px;flex:none}
+
+/* ══════════ v2.1 新增：实机截图对照 ══════════ */
+.shot{
+  width:100%;max-width:300px;border-radius:18px;display:block;
+  border:1px solid var(--outline-variant);margin-top:4px;
+}
+.shot-cap{
+  font-size:11.5px;color:var(--on-surface-variant);
+  max-width:300px;text-align:center;line-height:1.55;
+}
+.shot-cap b{color:var(--primary);font-weight:600}
+
+/* ══════════ v2.2 新增：便签「…」省略栏 ══════════
+   与 .note-card 逐项同构（padding / gap / 竖线尺寸 / 圆角 / 行高），
+   只把底色、竖线、文字换成「弱一档」的灰 —— 让它是同一列表里的
+   一格，而不是另一类控件。 */
+.note-card.more{
+  background:color-mix(in srgb, var(--surface-variant) 40%, var(--surface));
+  cursor:pointer;
+}
+.note-card.more .bar{background:var(--outline-variant)}
+.note-card.more .ntext{color:var(--on-surface-variant);letter-spacing:2px}
+
+/* ══════════ v2.2 新增：深浅底纹对照 ══════════
+   左浅右深并排，刻度尺上的斑马纹 alpha 与本页 .zk 变量联动，
+   便于肉眼比对「深色刻意调高一档」后的两条到底哪个更抢眼。 */
+.gtext-scope{display:flex;gap:22px;flex-wrap:wrap;justify-content:center}
+.gtext-col{display:flex;flex-direction:column;align-items:center;gap:8px}
+.gtext-col h4{
+  margin:0;font-size:12px;font-weight:600;color:var(--on-surface);
+  letter-spacing:.3px;
+}
+.strip{
+  width:250px;border-radius:12px;overflow:hidden;
+  border:1px solid var(--outline-variant);
+}
+.strip i{
+  display:block;height:26px;font-style:normal;
+  font-size:10px;color:var(--on-surface-variant);
+  display:flex;align-items:center;padding-left:10px;
+  font-variant-numeric:tabular-nums;
+}
+/* 浅色主题：深灰压白底 */
+.strip.light{background:#FFFFFF}
+.strip.light i{background:rgba(0,0,0,.03)}
+.strip.light i.line{background:transparent;box-shadow:inset 0 -1px 0 rgba(0,0,0,.08)}
+/* 深色主题：浅灰提黑底，alpha 刻意高出一档 */
+.strip.dark{background:#121212}
+.strip.dark i{background:rgba(255,255,255,.06);color:#C4C7C5}
+.strip.dark i.line{background:transparent;box-shadow:inset 0 -1px 0 rgba(255,255,255,.13)}
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>ClassReminder · Material 3 界面 <span style="font-size:.5em;opacity:.65;font-weight:400">v2.2</span></h1>
+  <p>
+    风格对齐 Google 官方应用（Material 3 + Google Blue <code>#1A73E8</code>）。
+    本页是 <b>1:1 视觉验收稿</b>：配色、圆角、字号、间距都按 <code>Theme.kt</code> /
+    <code>TodayScreen.kt</code> / <code>MainScreen.kt</code> 的实现还原。
+  </p>
+  <div class="tag">v2.2 新增：今天页便签 5 条上限 · Deadline 优先 · 「…」省略栏 · 深色底纹调高一档</div>
+  <div class="tag">v2.1：加号三项菜单 · 便签分类与 Deadline 倒计时 · 今天页空闲态</div>
+  <div class="tag">⑦ 加号菜单 · ⑧ 分类 + Deadline 编辑 · ⑨ 今天页主卡三态 · ⑩ 便签页徽章 · ⑪ 规则速查 · ⑫ 便签摘要 5 条 · ⑬ 底纹对照</div>
+  <div class="tag">导航 4 项：今天 / 课表 / 便签 / 设置</div>
+  <div class="toolbar">
+    <button id="theme-btn" onclick="toggleTheme()">切换深色 / 浅色</button>
+    <button id="grid-sel-btn" onclick="toggleGridSelect()">演示「选中课块 + 详情卡」</button>
+  </div>
+</div>
+
+<div class="stage">
+
+  <!-- ══════════ 1. 今天 ══════════ -->
+  <div class="phone-wrap">
+    <div class="phone-label"><b>①</b> 今天（新首屏）</div>
+    <div class="phone" id="p1">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ▾</span></div>
+      <div class="topbar">
+        <div class="title">下午好。</div>
+        <div class="sub">9 月 29 日 周二 · 第 5 周</div>
+      </div>
+      <div class="content">
+        <!-- 正在上课：实心主色主卡 -->
+        <div class="featured ongoing">
+          <div class="st"><span class="dot"></span><span class="st-text">正在上课 · 还剩 27 分钟</span></div>
+          <div class="ftitle">数据结构与算法</div>
+          <div class="fsub">09:40 – 11:20 · 教三 402 · 李文博</div>
+        </div>
+
+        <div class="section"><span>接下来</span></div>
+        <div class="row-card">
+          <div class="time">14:00</div>
+          <div class="body">
+            <div class="rtitle">计算机组成原理</div>
+            <div class="rsub">教二 305 · 王海燕</div>
+          </div>
+        </div>
+        <div class="row-card">
+          <div class="time">16:10</div>
+          <div class="body">
+            <div class="rtitle">大学英语（读写）</div>
+            <div class="rsub">外语楼 210</div>
+          </div>
+          <span class="temp-badge">临时</span>
+        </div>
+
+        <div class="section"><span>便签 · 3 条</span><span class="more">全部</span></div>
+        <div class="note-card">
+          <span class="bar"></span>
+          <span class="ntext">周五前交实验报告，记得带 U 盘</span>
+        </div>
+        <div class="note-card" style="--note-color:var(--note-red)">
+          <span class="bar"></span>
+          <span class="ntext">图书馆四楼自习位已约到 18:00</span>
+        </div>
+      </div>
+      <div class="fab" title="添加课程">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+      <div class="bottombar">
+        <div class="statusrow"><span class="sdot"></span>提醒服务运行中 · 第 5 周</div>
+        <div class="navbar">
+          <div class="navitem active">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>
+            今天
+          </div>
+          <div class="navitem">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/></svg></span>
+            课表
+          </div>
+          <div class="navitem">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L7 18l-4 1 1-4z"/></svg></span>
+            便签
+          </div>
+          <div class="navitem">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4h.2A1.7 1.7 0 0 0 4.4 8.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V4a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1z"/></svg></span>
+            设置
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ 2. 课表 ══════════ -->
+  <div class="phone-wrap">
+    <div class="phone-label"><b>②</b> 课表（滑块切换 + 选中详情卡 + FAB 上移）</div>
+    <div class="phone" id="p2">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ▾</span></div>
+      <div class="weekhead">
+        <div class="weeknav">
+          <span class="arrow"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></span>
+          <span class="wk">第 5 周<small>本周</small></span>
+          <span class="arrow"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></span>
+        </div>
+        <div class="seg" id="seg">
+          <div class="pill" id="seg-pill"></div>
+          <div class="seg-item active" onclick="setSeg(0)">表格</div>
+          <div class="seg-item" onclick="setSeg(1)">列表</div>
+        </div>
+      </div>
+      <div class="content grid-mode">
+        <div class="grid-scroll">
+          <div class="grid">
+            <div class="gh"></div>
+            <div class="gh hl">周一</div>
+            <div class="gh today hl">周二<span class="hbadge">今日</span></div>
+            <div class="gh">周三</div>
+            <div class="gh">周四</div>
+            <div class="gh">周五</div>
+
+            <div class="axis">
+              <span style="top:0">08:00</span>
+              <span style="top:33%">10:00</span>
+              <span style="top:66%">14:00</span>
+              <span style="top:99%">16:00</span>
+            </div>
+
+            <!-- 周一 -->
+            <div class="gcol">
+              <div class="block" style="top:4%;height:22%"><span class="accent"></span><div class="bt">高等数学</div><div class="br">教一 101</div></div>
+              <div class="block" style="top:34%;height:20%"><span class="accent"></span><div class="bt">线性代数</div><div class="br">教一 208</div></div>
+              <div class="block" style="top:66%;height:22%"><span class="accent"></span><div class="bt">体育</div><div class="br">体育馆</div></div>
+            </div>
+
+            <!-- 周二（今天） -->
+            <div class="gcol today">
+              <div class="block" style="top:4%;height:26%"><span class="accent"></span><div class="bt">数据结构<br>与算法</div><div class="br">教三 402</div></div>
+              <div class="block" id="sel-block" style="top:34%;height:22%"><span class="accent"></span><div class="bt">计算机<br>组成原理</div><div class="br">教二 305</div></div>
+              <div class="block temp" style="top:66%;height:20%"><span class="accent"></span><div class="bt">大学英语</div><div class="br">外语楼 210</div></div>
+            </div>
+
+            <!-- 周三 -->
+            <div class="gcol">
+              <div class="block" style="top:4%;height:20%"><span class="accent"></span><div class="bt">离散数学</div><div class="br">教一 305</div></div>
+              <div class="block" style="top:56%;height:24%"><span class="accent"></span><div class="bt">操作系统</div><div class="br">教三 108</div></div>
+            </div>
+
+            <!-- 周四 -->
+            <div class="gcol">
+              <div class="block" style="top:12%;height:24%"><span class="accent"></span><div class="bt">计算机网络</div><div class="br">教三 501</div></div>
+              <div class="block" style="top:66%;height:22%"><span class="accent"></span><div class="bt">毛概</div><div class="br">教二 401</div></div>
+            </div>
+
+            <!-- 周五 -->
+            <div class="gcol">
+              <div class="block" style="top:4%;height:22%"><span class="accent"></span><div class="bt">数据库<br>原理</div><div class="br">教三 302</div></div>
+              <div class="block temp" style="top:45%;height:18%"><span class="accent"></span><div class="bt">实验课</div><div class="br">实验楼 B2</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 选中详情卡 -->
+        <div class="detail" id="detail-card">
+          <div class="dbar"></div>
+          <div class="dbody">
+            <div class="dt">计算机组成原理</div>
+            <div class="ds">周二 14:00–15:40 · 教二 305 · 王海燕</div>
+          </div>
+          <div class="dside">
+            <span class="dicon edit" title="编辑课程"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 5.5l4 4"/></svg></span>
+            <span class="dicon" title="取消选中"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+          </div>
+        </div>
+      </div>
+      <div class="fab" id="p2-fab">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+      <div class="bottombar">
+        <div class="statusrow"><span class="sdot"></span>提醒服务运行中 · 第 5 周</div>
+        <div class="navbar">
+          <div class="navitem">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>
+            今天
+          </div>
+          <div class="navitem active">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/></svg></span>
+            课表
+          </div>
+          <div class="navitem">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L7 18l-4 1 1-4z"/></svg></span>
+            便签
+          </div>
+          <div class="navitem">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4h.2A1.7 1.7 0 0 0 4.4 8.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V4a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1z"/></svg></span>
+            设置
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ 3. 便签 ══════════ -->
+  <div class="phone-wrap">
+    <div class="phone-label"><b>③</b> 便签（保留独立 Tab）</div>
+    <div class="phone" id="p3">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ▾</span></div>
+      <div class="topbar with-search">
+        <div class="searchbox">
+          <svg class="ic ic-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          搜索便签...
+        </div>
+        <div class="iconbtn"><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></div>
+      </div>
+      <div class="content">
+        <div class="note-item sel">
+          <div class="nbody">
+            <div class="ntxt">周五前交实验报告，记得带 U 盘</div>
+            <div class="nmeta">9 月 27 日 · 置顶</div>
+          </div>
+        </div>
+        <div class="note-item">
+          <div class="nbody">
+            <div class="ntxt">图书馆四楼自习位已约到 18:00</div>
+            <div class="nmeta">9 月 26 日</div>
+          </div>
+        </div>
+        <div class="note-item">
+          <div class="nbody">
+            <div class="ntxt">下周三下午找王老师签字确认选题</div>
+            <div class="nmeta">9 月 25 日</div>
+          </div>
+        </div>
+        <div class="note-item">
+          <div class="nbody">
+            <div class="ntxt">班费已交，收据在书包夹层</div>
+            <div class="nmeta">9 月 22 日</div>
+          </div>
+        </div>
+      </div>
+      <div class="fab">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+      <div class="bottombar">
+        <div class="statusrow"><span class="sdot"></span>提醒服务运行中 · 第 5 周</div>
+        <div class="navbar">
+          <div class="navitem">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>
+            今天
+          </div>
+          <div class="navitem">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/></svg></span>
+            课表
+          </div>
+          <div class="navitem active">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L7 18l-4 1 1-4z"/></svg></span>
+            便签
+          </div>
+          <div class="navitem">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4h.2A1.7 1.7 0 0 0 4.4 8.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V4a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1z"/></svg></span>
+            设置
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ 4. 设置 ══════════ -->
+  <div class="phone-wrap">
+    <div class="phone-label"><b>④</b> 设置（M3 分组卡）</div>
+    <div class="phone" id="p4">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ▾</span></div>
+      <div class="set-title">设置</div>
+      <div class="content">
+        <!-- 提醒：数值输入 + 两个开关（对齐 SwitchRow("开机自启") / SwitchRow("锁屏弹窗")） -->
+        <div class="set-card">
+          <div class="clabel">提醒</div>
+          <div class="num-field">
+            <span class="lbl">提前提醒（分钟）</span>
+            <div class="v">30</div>
+          </div>
+          <div class="field-hint">1~180 分钟，超出会自动夹住</div>
+          <div class="switch-row"><span>开机自启</span><span class="switch"><i></i></span></div>
+          <div class="switch-row"><span>锁屏弹窗</span><span class="switch on"><i></i></span></div>
+          <div class="field-hint block">开启后到点会亮屏并弹窗提醒；部分系统（如 ColorOS）会拦掉全屏弹窗，此时仍会发高优先级通知并亮屏。</div>
+        </div>
+
+        <!-- 外观：三选一（主题名来自 ThemeMode.label） -->
+        <div class="set-card">
+          <div class="clabel">外观</div>
+          <div class="radio-row on"><span class="radio on"></span>跟随系统</div>
+          <div class="radio-row"><span class="radio"></span>浅色</div>
+          <div class="radio-row"><span class="radio"></span>深色</div>
+        </div>
+
+        <!-- 通知权限 -->
+        <div class="set-card">
+          <div class="clabel">通知权限</div>
+          <div class="field-hint block">没有通知权限时，锁屏提醒和前台服务都无法工作。</div>
+          <div class="pill-btn">请求通知权限</div>
+          <div class="pill-btn outlined">打开系统设置</div>
+        </div>
+      </div>
+      <div class="bottombar">
+        <div class="statusrow"><span class="sdot"></span>提醒服务运行中 · 第 5 周</div>
+        <div class="navbar">
+          <div class="navitem">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>
+            今天
+          </div>
+          <div class="navitem">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/></svg></span>
+            课表
+          </div>
+          <div class="navitem">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L7 18l-4 1 1-4z"/></svg></span>
+            便签
+          </div>
+          <div class="navitem active">
+            <span class="pill"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4h.2A1.7 1.7 0 0 0 4.4 8.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V4a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1z"/></svg></span>
+            设置
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ 5. 便签双击编辑 + 8 色调色盘（v2.0 新增） ══════════ -->
+  <div class="phone-wrap">
+    <div class="phone-label"><b>⑤</b> 便签编辑：双击卡片 → 改内容 + 换色</div>
+    <div class="phone" id="p5">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ▾</span></div>
+      <div class="topbar">
+        <div class="title">快速便签</div>
+      </div>
+      <div class="content">
+        <div class="note-card" style="--note-color:var(--note-red)">
+          <span class="bar"></span>
+          <span class="ntext">周五前交实验报告，记得带 U 盘</span>
+        </div>
+        <div class="note-card">
+          <span class="bar"></span>
+          <span class="ntext">图书馆四楼自习位已约到 18:00</span>
+        </div>
+      </div>
+
+      <!-- 对话框：双击后浮出 -->
+      <div class="dlg-scrim">
+        <div class="dlg">
+          <div class="dlg-title">编辑便签</div>
+          <div class="dlg-field">
+            <span class="lbl">便签内容</span>
+            <div class="val">周五前交实验报告，记得带 U 盘</div>
+          </div>
+          <div class="dlg-sublabel">颜色</div>
+          <div class="palette" id="palette">
+            <span class="swatch" style="background:#8AB4F8" onclick="pick(this)"></span>
+            <span class="swatch" style="background:#4DD0E1" onclick="pick(this)"></span>
+            <span class="swatch" style="background:#81C995" onclick="pick(this)"></span>
+            <span class="swatch" style="background:#FDD663" onclick="pick(this)"></span>
+            <span class="swatch" style="background:#FFB74D" onclick="pick(this)"></span>
+            <span class="swatch sel" style="background:#F28B82" onclick="pick(this)">
+              <svg viewBox="0 0 24 24" style="stroke:#202124"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+            </span>
+            <span class="swatch" style="background:#D7AEFB" onclick="pick(this)"></span>
+            <span class="swatch" style="background:#9AA0A6" onclick="pick(this)"></span>
+          </div>
+          <div class="dlg-actions">
+            <button class="dlg-btn text">取消</button>
+            <button class="dlg-btn filled">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="bottombar">
+        <div class="statusrow"><span class="sdot"></span>提醒服务运行中 · 第 5 周</div>
+        <div class="navbar">
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>今天</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/></svg></span>课表</div>
+          <div class="navitem active"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L7 18l-4 1 1-4z"/></svg></span>便签</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4h.2A1.7 1.7 0 0 0 4.4 8.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V4a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1z"/></svg></span>设置</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ 6. 全时段问候语对照（v2.0 新增） ══════════ -->
+  <div class="phone-wrap">
+    <div class="phone-label"><b>⑥</b> 顶栏问候语 · 全时段对照</div>
+    <div class="greet-wrap">
+      <table class="greet-table">
+        <tr><th>时段</th><th>小时</th><th>显示文案</th></tr>
+        <tr><td>早上</td><td><code>05:00 – 08:59</code></td><td>早上好。</td></tr>
+        <tr><td>上午到中午</td><td><code>09:00 – 11:59</code></td><td>午安。</td></tr>
+        <tr><td>下午</td><td><code>12:00 – 17:59</code></td><td>下午好。</td></tr>
+        <tr><td>傍晚到入夜</td><td><code>18:00 – 22:59</code></td><td>晚上好。</td></tr>
+        <tr><td>深夜</td><td><code>23:00 – 04:59</code></td><td>夜深了。</td></tr>
+      </table>
+      <p style="font-size:12px;color:var(--on-surface-variant);max-width:520px;margin-top:12px;line-height:1.6">
+        实现位于 <code>TodayScreen.kt</code> 的 <code>greetingFor(millis)</code>，
+        由 <code>GreetingTest.kt</code> 的 7 个用例覆盖（含每档边界与全天 24 小时兜底）。
+        顶栏纵向内边距同步加大（title 字号 26→28sp），以容纳问候语显示区。
+      </p>
+    </div>
+  </div>
+
+  <!-- ══════════ 7. 加号按钮三项菜单（v2.1 新增） ══════════ -->
+  <div class="phone-wrap">
+    <div class="phone-label"><b>⑦</b> 加号按钮展开：添加便签 / 临时提醒 / 长期提醒</div>
+    <div class="phone" id="p7">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ▾</span></div>
+      <div class="topbar greeting">
+        <div class="title">下午好。</div>
+        <div class="sub">9 月 29 日 周二 · 第 5 周</div>
+      </div>
+      <div class="content">
+        <div class="featured idle">
+          <div class="st"><span class="dot"></span><span class="st-text">当前空闲</span></div>
+          <div class="ftitle">数据结构与算法</div>
+          <div class="fsub">距离下一件事 2 小时 14 分钟后</div>
+        </div>
+
+        <div class="section"><span>今天的课</span></div>
+        <div class="row-card">
+          <div class="time">14:00</div>
+          <div class="body">
+            <div class="rtitle">计算机组成原理</div>
+            <div class="rsub">教二 305 · 王海燕</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 展开的三项菜单：最下面一项最靠近 FAB，对应 Compose 里从下往上错峰入场 -->
+      <div class="fab-menu">
+        <div class="fab-tile">
+          <svg class="fic-w fic" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L7 18l-4 1 1-4z"/></svg>
+          添加便签
+        </div>
+        <div class="fab-tile">
+          <svg class="fic-w fic" viewBox="0 0 24 24"><path d="M12 3l2.1 5.3L20 9l-4 3.6L17.2 19 12 15.8 6.8 19 8 12.6 4 9l5.9-.7z"/></svg>
+          临时提醒
+        </div>
+        <div class="fab-tile">
+          <svg class="fic-w fic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/></svg>
+          长期提醒
+        </div>
+      </div>
+
+      <div class="fab open">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+      <div class="bottombar">
+        <div class="statusrow"><span class="sdot"></span>提醒服务运行中 · 第 5 周</div>
+        <div class="navbar">
+          <div class="navitem active"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>今天</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/></svg></span>课表</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L7 18l-4 1 1-4z"/></svg></span>便签</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4h.2A1.7 1.7 0 0 0 4.4 8.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V4a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1z"/></svg></span>设置</div>
+        </div>
+      </div>
+    </div>
+    <img class="shot" src="v21_menu.png" alt="实机：加号三项菜单">
+    <div class="shot-cap"><b>实机</b>：FAB 图标旋成 ×，三个方块自下而上展开<br>uiautomator 读到 添加便签 / 临时提醒 / 长期提醒</div>
+  </div>
+
+  <!-- ══════════ 8. 便签编辑：分类 + Deadline（v2.1 新增） ══════════ -->
+  <div class="phone-wrap">
+    <div class="phone-label"><b>⑧</b> 便签编辑：内容 → 颜色 → 分类（Deadline 自定义已展开）</div>
+    <div class="phone" id="p8">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ▾</span></div>
+      <div class="topbar">
+        <div class="title">快速便签</div>
+      </div>
+      <div class="content">
+        <div class="note-card" style="--note-color:var(--note-red)">
+          <span class="bar"></span>
+          <span class="ntext">毕业论文初稿</span>
+          <span class="badges">
+            <span class="badge-type">开题</span>
+            <span class="badge-dl expired"><b>9/17 13:05</b><br>已过期 12 天</span>
+          </span>
+        </div>
+        <div class="note-card">
+          <span class="bar"></span>
+          <span class="ntext">图书馆四楼自习位已约到 18:00</span>
+          <span class="badges"><span class="badge-type">生活</span></span>
+        </div>
+      </div>
+
+      <div class="dlg-scrim">
+        <div class="dlg">
+          <div class="dlg-title">编辑便签</div>
+          <div class="dlg-field">
+            <span class="lbl">便签内容</span>
+            <div class="val">毕业论文初稿</div>
+          </div>
+
+          <div class="dlg-sublabel">颜色</div>
+          <div class="palette">
+            <span class="swatch" style="background:#8AB4F8" onclick="pick(this)"></span>
+            <span class="swatch" style="background:#4DD0E1" onclick="pick(this)"></span>
+            <span class="swatch" style="background:#81C995" onclick="pick(this)"></span>
+            <span class="swatch" style="background:#FDD663" onclick="pick(this)"></span>
+            <span class="swatch" style="background:#FFB74D" onclick="pick(this)"></span>
+            <span class="swatch sel" style="background:#F28B82" onclick="pick(this)"><svg viewBox="0 0 24 24" style="stroke:#202124"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+            <span class="swatch" style="background:#D7AEFB" onclick="pick(this)"></span>
+            <span class="swatch" style="background:#9AA0A6" onclick="pick(this)"></span>
+          </div>
+
+          <div class="dlg-sublabel">分类</div>
+          <div class="chiprow">
+            <span class="chip">空</span><span class="chip">工作</span><span class="chip">生活</span><span class="chip">学习</span>
+          </div>
+          <div class="chiprow">
+            <span class="chip">Deadline</span><span class="chip">自定义</span>
+            <span class="chip sel">Deadline 自定义
+              <svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+            </span>
+          </div>
+
+          <div class="dlg-sublabel">分类名称</div>
+          <div class="dlg-field"><div class="val">开题</div></div>
+
+          <div class="dlg-sublabel">截止</div>
+          <div class="dl-row">
+            <button class="dl-btn">选日期</button>
+            <button class="dl-btn">选时间</button>
+            <button class="dl-btn clear">清除</button>
+          </div>
+          <div class="dl-preview expired">
+            <span class="dot"></span><span>9/17 13:05 · 已过期 12 天</span>
+          </div>
+
+          <div class="dlg-actions">
+            <button class="dlg-btn text">取消</button>
+            <button class="dlg-btn filled">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="bottombar">
+        <div class="statusrow"><span class="sdot"></span>提醒服务运行中 · 第 5 周</div>
+        <div class="navbar">
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>今天</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/></svg></span>课表</div>
+          <div class="navitem active"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L7 18l-4 1 1-4z"/></svg></span>便签</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4h.2A1.7 1.7 0 0 0 4.4 8.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V4a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1z"/></svg></span>设置</div>
+        </div>
+      </div>
+    </div>
+    <img class="shot" src="v21_dlg.png" alt="实机：对话框默认分类为「空」">
+    <div class="shot-cap"><b>实机</b>：段落顺序 便签内容 → <b>颜色</b> → <b>分类</b><br>默认选中「空」，第一行 空/工作/生活/学习</div>
+    <img class="shot" src="v21_dl.png" alt="实机：Deadline 自定义展开">
+    <div class="shot-cap"><b>实机</b>：选「Deadline 自定义」后展开「分类名称」+ 截止区<br>预览行读到 <b>9/17 13:05 · 已过期 12 天</b>（过期走红色）</div>
+  </div>
+
+  <!-- ══════════ 9. 今天页三种主卡状态（v2.1 新增） ══════════ -->
+  <div class="phone-wrap">
+    <div class="phone-label"><b>⑨</b> 今天页主卡三态：空闲 / 正在上课 / 课上完了</div>
+    <div class="phone" id="p9">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ▾</span></div>
+      <div class="topbar greeting">
+        <div class="title">下午好。</div>
+        <div class="sub">9 月 29 日 周二 · 第 5 周</div>
+      </div>
+      <div class="content">
+        <div class="featured idle">
+          <div class="st"><span class="dot"></span><span class="st-text">当前空闲</span></div>
+          <div class="ftitle">数据结构与算法</div>
+          <div class="fsub">距离下一件事 2 小时 14 分钟后</div>
+        </div>
+
+        <div class="featured ongoing">
+          <div class="st"><span class="dot"></span><span class="st-text">正在上课 · 还剩 27 分钟</span></div>
+          <div class="ftitle">计算机组成原理</div>
+          <div class="fsub">14:00 – 15:35 · 教二 305 · 王海燕</div>
+        </div>
+
+        <div class="featured">
+          <div class="ftitle" style="font-size:20px">今天的课上完了 🎉</div>
+          <div class="fsub">好好休息，或者看看便签。</div>
+        </div>
+      </div>
+
+      <div class="fab">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+      <div class="bottombar">
+        <div class="statusrow"><span class="sdot"></span>提醒服务运行中 · 第 5 周</div>
+        <div class="navbar">
+          <div class="navitem active"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>今天</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/></svg></span>课表</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L7 18l-4 1 1-4z"/></svg></span>便签</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4h.2A1.7 1.7 0 0 0 4.4 8.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V4a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1z"/></svg></span>设置</div>
+        </div>
+      </div>
+    </div>
+    <img class="shot" src="v21_dlcard.png" alt="实机：今天页便签摘要显示 Deadline">
+    <div class="shot-cap"><b>实机</b>：今天页便签摘要行右侧读到 <b>Deadline</b> + <b>9/17 13:05 · 已过期 12 天</b></div>
+    <img class="shot" src="v21_today.png" alt="实机：今天页问候语 + 空态">
+    <div class="shot-cap"><b>实机</b>：问候语加大加粗（高 129px，此前约 102px）<br>空态读到 <b>今天的课上完了 🎉</b></div>
+    <img class="shot" src="v21_drag.png" alt="实机：拖动便签无蓝色按钮">
+    <div class="shot-cap"><b>实机</b>：长按拖动便签 —— 底层编辑按钮已被隐藏，<br>不再误触（此前会露出一个蓝色方块）</div>
+  </div>
+
+  <!-- ══════════ 10. 便签页徽章对照（v2.1 新增） ══════════ -->
+  <div class="phone-wrap">
+    <div class="phone-label"><b>⑩</b> 便签页：分类徽章 / Deadline 时刻 + 倒计时</div>
+    <div class="phone" id="p10">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ▾</span></div>
+      <div class="topbar">
+        <div class="title">快速便签</div>
+      </div>
+      <div class="content">
+        <div class="note-card" style="--note-color:var(--note-red)">
+          <span class="bar"></span>
+          <span class="ntext">毕业论文初稿</span>
+          <span class="badges">
+            <span class="badge-type">开题</span>
+            <span class="badge-dl expired"><b>9/17 13:05</b><br>已过期 12 天</span>
+          </span>
+        </div>
+        <div class="note-card">
+          <span class="bar"></span>
+          <span class="ntext">实验室周报要交</span>
+          <span class="badges">
+            <span class="badge-type">工作</span>
+            <span class="badge-dl"><b>9/30 18:00</b><br>23 小时后</span>
+          </span>
+        </div>
+        <div class="note-card">
+          <span class="bar"></span>
+          <span class="ntext">图书馆四楼自习位已约到 18:00</span>
+          <span class="badges"><span class="badge-type">生活</span></span>
+        </div>
+        <div class="note-card">
+          <span class="bar"></span>
+          <span class="ntext">买牙膏</span>
+        </div>
+      </div>
+
+      <div class="fab">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+      <div class="bottombar">
+        <div class="statusrow"><span class="sdot"></span>提醒服务运行中 · 第 5 周</div>
+        <div class="navbar">
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>今天</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/></svg></span>课表</div>
+          <div class="navitem active"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L7 18l-4 1 1-4z"/></svg></span>便签</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4h.2A1.7 1.7 0 0 0 4.4 8.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V4a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1z"/></svg></span>设置</div>
+        </div>
+      </div>
+    </div>
+    <img class="shot" src="v21_notelist.png" alt="实机：便签页 Deadline 徽章">
+    <div class="shot-cap"><b>实机</b>：右侧读到 <b>Deadline</b> / <b>9/17 13:05</b> / <b>已过期 12 天</b><br>三行堆叠，过期走 error 色</div>
+    <img class="shot" src="v21_badges.png" alt="实机：一般分类 vs Deadline 徽章">
+    <div class="shot-cap"><b>实机</b>：一般分类只显示名字（<b>工作</b>），<br>不占倒计时行 —— 与 Deadline 类明确区分</div>
+  </div>
+
+  <!-- ══════════ 11. v2.1 规则速查（新增） ══════════ -->
+  <div class="phone-wrap">
+    <div class="phone-label"><b>⑪</b> v2.1 规则速查：分类表 / 倒计时档位 / 空闲判定</div>
+    <div class="greet-wrap">
+      <table class="greet-table">
+        <tr><th>typeIndex</th><th>分类</th><th>可改名</th><th>带 Deadline</th><th>右下角显示</th></tr>
+        <tr><td><code>0</code></td><td>空</td><td>—</td><td>—</td><td>（不显示徽章）</td></tr>
+        <tr><td><code>1</code></td><td>工作</td><td>—</td><td>—</td><td>分类名</td></tr>
+        <tr><td><code>2</code></td><td>生活</td><td>—</td><td>—</td><td>分类名</td></tr>
+        <tr><td><code>3</code></td><td>学习</td><td>—</td><td>—</td><td>分类名</td></tr>
+        <tr><td><code>4</code></td><td>Deadline</td><td>—</td><td>✓</td><td>分类名 + 时刻 + 倒计时</td></tr>
+        <tr><td><code>5</code></td><td>自定义</td><td>✓</td><td>—</td><td>自定义名</td></tr>
+        <tr><td><code>6</code></td><td>Deadline 自定义</td><td>✓</td><td>✓</td><td>自定义名 + 时刻 + 倒计时</td></tr>
+      </table>
+
+      <table class="greet-table" style="margin-top:18px">
+        <tr><th>剩余时间</th><th>倒计时文案</th><th>颜色</th></tr>
+        <tr><td><code>&lt; 0</code>（已过）</td><td>已过期 / 已过期 N 天</td><td>error（红）</td></tr>
+        <tr><td><code>&lt; 1 天</code></td><td>即将到期 · N 分钟后 · N 小时 M 分后</td><td>primary（蓝）</td></tr>
+        <tr><td><code>≥ 1 天</code></td><td>N 天后 / N 个月后</td><td>primary（蓝）</td></tr>
+      </table>
+
+      <p style="font-size:12px;color:var(--on-surface-variant);max-width:560px;margin-top:14px;line-height:1.7">
+        <b>分类存下标 + 语义 kind</b>：<code>NoteEntity</code> 只存 <code>typeIndex</code>，
+        行为分支由 <code>NoteTypeKind</code>（NONE / GENERAL / DEADLINE）决定 ——
+        这样将来插入新分类不会影响已有数据，kind 也把「要不要显示倒计时」「名字能不能改」收在一处。<br>
+        <b>空闲判定边界取严格大于</b>：<code>TodaySchedule.isIdle()</code> 要求「离下一节课开始」<b>严格超过</b>预警窗口。
+        正好剩 30 分钟而预警也是 30 分钟时，提醒业务已经在提示了，不该同时说「空闲」——那两句话是矛盾的。<br>
+        以上规则由 <code>NoteTypeTest</code>(21) + <code>TodayScheduleTest</code>(15) + <code>EmptyTodayTextTest</code>(5) 共 41 个用例覆盖。
+      </p>
+    </div>
+  </div>
+
+  <!-- ══════════ 12. 今天页便签摘要：5 条上限 + Deadline 优先（v2.2 新增） ══════════ -->
+  <div class="phone-wrap">
+    <div class="phone-label"><b>⑫</b> 今天页便签摘要：最多 5 条 · Deadline 优先 · 超出走「…」省略栏</div>
+    <div class="phone" id="p12">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ▾</span></div>
+      <div class="topbar greeting">
+        <div class="title">下午好。</div>
+        <div class="sub">9 月 29 日 周二 · 第 5 周</div>
+      </div>
+      <div class="content">
+        <div class="section"><span>便签 · 7 条</span><span class="more">全部</span></div>
+
+        <!-- ① Deadline 类 → 提到最前 -->
+        <div class="note-card" style="--note-color:var(--note-red)">
+          <span class="bar"></span>
+          <span class="ntext">开题报告终稿</span>
+          <span class="badges">
+            <span class="badge-type">开题</span>
+            <span class="badge-dl"><b>9/30 18:00</b><br>20 小时 14 分后</span>
+          </span>
+        </div>
+        <!-- ② Deadline 类 -->
+        <div class="note-card" style="--note-color:var(--note-blue)">
+          <span class="bar"></span>
+          <span class="ntext">Deadline 演示条目</span>
+          <span class="badges">
+            <span class="badge-type">Deadline</span>
+            <span class="badge-dl"><b>10/2 18:00</b><br>2 天后</span>
+          </span>
+        </div>
+        <!-- ③④ 普通便签，保持用户拖拽顺序 -->
+        <div class="note-card" style="--note-color:var(--note-green)">
+          <span class="bar"></span>
+          <span class="ntext">实验室周报</span>
+          <span class="badges"><span class="badge-type">工作</span></span>
+        </div>
+        <div class="note-card" style="--note-color:var(--note-yellow)">
+          <span class="bar"></span>
+          <span class="ntext">买牙膏</span>
+        </div>
+        <!-- ⑤ 省略栏：与上面逐项同构，只是整体压灰 -->
+        <div class="note-card more">
+          <span class="bar"></span>
+          <span class="ntext">…</span>
+        </div>
+      </div>
+
+      <div class="fab">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+      <div class="bottombar">
+        <div class="statusrow"><span class="sdot"></span>提醒服务运行中 · 第 5 周</div>
+        <div class="navbar">
+          <div class="navitem active"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>今天</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/></svg></span>课表</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L7 18l-4 1 1-4z"/></svg></span>便签</div>
+          <div class="navitem"><span class="pill"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4h.2A1.7 1.7 0 0 0 4.4 8.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V4a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1z"/></svg></span>设置</div>
+        </div>
+      </div>
+    </div>
+
+    <img class="shot" src="v22_today.png" alt="实机：今天页 7 条便签只显示 5 格">
+    <div class="shot-cap"><b>实机</b>：库里 7 条便签，摘要区只出现 <b>5 个栏位</b> ——<br>
+      4 条正文 + 1 条「…」；两条 Deadline 被提到最前</div>
+
+    <div class="greet-wrap" style="margin-top:6px">
+      <table class="greet-table">
+        <tr><th>库中便签数</th><th>正文条数</th><th>省略栏</th><th>合计栏位</th></tr>
+        <tr><td><code>0</code></td><td>—</td><td>—</td><td>0（整段不渲染）</td></tr>
+        <tr><td><code>≤ 5</code></td><td>全部</td><td>无</td><td><code>n</code></td></tr>
+        <tr><td><code>&gt; 5</code></td><td><code>4</code>（已按 Deadline 优先排序）</td><td>有</td><td><b>恒为 5</b></td></tr>
+      </table>
+
+      <p style="font-size:12px;color:var(--on-surface-variant);max-width:560px;margin-top:14px;line-height:1.7">
+        <b>为什么超量时只用 4 条正文</b>：5 条填满时，用户没法判断「到底还有没有」。留一格给省略栏，
+        「还有没有更多」这件事就从「数数」变成「看有没有那一栏」—— 一眼可辨。<br>
+        <b>Deadline 优先但组内不乱</b>：挑选用 <code>sortedBy { if (hasDeadline) 0 else 1 }</code>，
+        Kotlin 的 <code>sortedBy</code> 是<b>稳定排序</b>，同组内保持用户拖拽顺序，
+        所以「重要的事上来」和「我排的顺序别乱」两件事不冲突。<br>
+        <b>没填时间的 Deadline 不算优先</b>：<code>hasDeadline</code> 同时要求 <code>typeIndex</code> 是 Deadline 类
+        <b>且</b> <code>deadlineAt != null</code>。只选了分类却没填时刻的条目，倒计时画不出来，
+        提上来也只是一句没有信息量的标题，所以留在原位。<br>
+        规则由 <code>TodayNotePickerTest</code> 15 个用例覆盖（含不变量 <code>正文 + 省略栏 ≤ 5</code>）。
+      </p>
+    </div>
+  </div>
+
+  <!-- ══════════ 13. 深浅底纹对照（v2.2 新增） ══════════ -->
+  <div class="phone-wrap">
+    <div class="phone-label"><b>⑬</b> 课表底纹：深色刻意调高一档（数值不对齐，观感对齐）</div>
+    <div class="greet-wrap">
+      <div class="gtext-scope">
+        <div class="gtext-col">
+          <h4>浅色主题</h4>
+          <div class="strip light">
+            <i class="line">网格线 outlineVariant @ 0.08</i>
+            <i>斑马纹 onSurface @ 0.03</i>
+            <i>斑马纹 onSurface @ 0.03</i>
+            <i class="line">网格线 outlineVariant @ 0.08</i>
+            <i>斑马纹 onSurface @ 0.03</i>
+          </div>
+          <div class="shot-cap" style="text-align:center">深灰压白底 —— 反差天然明显</div>
+        </div>
+        <div class="gtext-col">
+          <h4>深色主题（本次调高）</h4>
+          <div class="strip dark">
+            <i class="line">网格线 outlineVariant @ 0.13</i>
+            <i>斑马纹 onSurface @ 0.06</i>
+            <i>斑马纹 onSurface @ 0.06</i>
+            <i class="line">网格线 outlineVariant @ 0.13</i>
+            <i>斑马纹 onSurface @ 0.06</i>
+          </div>
+          <div class="shot-cap" style="text-align:center">浅灰提黑底 —— 所以数值要高出一档</div>
+        </div>
+      </div>
+
+      <table class="greet-table" style="margin-top:18px">
+        <tr><th>用途</th><th>浅色 alpha</th><th>深色 alpha</th><th>常量名</th></tr>
+        <tr><td>斑马纹（整列底）</td><td><code>0.03</code></td><td><b><code>0.06</code></b></td><td><code>ZEBRA_ALPHA</code> / <code>_DARK</code></td></tr>
+        <tr><td>横向网格线</td><td><code>0.08</code></td><td><b><code>0.13</code></b></td><td><code>GRID_LINE_ALPHA</code> / <code>_DARK</code></td></tr>
+        <tr><td>纵向列分隔</td><td><code>0.05</code></td><td><b><code>0.09</code></b></td><td><code>GRID_COLUMN_ALPHA</code> / <code>_DARK</code></td></tr>
+      </table>
+
+      <table class="greet-table" style="margin-top:12px">
+        <tr><th>实机采样点（周三列 x=770，空白段）</th><th>RGB</th><th>灰阶</th></tr>
+        <tr><td>无斑马纹底色</td><td><code>(18, 18, 18)</code></td><td>18</td></tr>
+        <tr><td>有斑马纹处</td><td><code>(31, 31, 31)</code></td><td>31 <span style="color:var(--primary)">(+13)</span></td></tr>
+        <tr><td>网格线</td><td><code>(36, 38, 41)</code></td><td>~38 <span style="color:var(--primary)">(+7)</span></td></tr>
+      </table>
+
+      <p style="font-size:12px;color:var(--on-surface-variant);max-width:560px;margin-top:14px;line-height:1.7">
+        <b>为什么深色要单独给一套值</b>：底纹是靠 <code>onSurface</code> 叠色实现的。
+        浅色主题里 <code>onSurface</code> 接近黑，压在白色底上是「深灰压白」；
+        深色主题里它接近白，压在近黑底上是「浅灰提黑」—— 同样的 alpha，后者在感知上弱得多。
+        所以深色不是「也一样调 0.03」，而是给一组略高的值，让两边的<b>观感</b>对齐，
+        而不是让<b>数值</b>对齐。<br>
+        <b>判定方式沿用项目惯例</b>：<code>surface.luminance() &lt; 0.5f</code>，
+        与便签配色的深浅判定（<code>notePalette()</code>）走同一套逻辑，不引入第二套标准。<br>
+        <b>幅度控制在「可辨但不抢戏」</b>：+13 灰阶足以看出列带，又不至于让空白格比课程块还显眼。
+        调色时优先相信实机像素采样，而不是设计稿上的数字。
+      </p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// 深/浅色切换：只切 :root 上的 .dark 类，模拟 Theme.kt 的 lightColorScheme / darkColorScheme
+let dark = false;
+function toggleTheme(){
+  dark = !dark;
+  document.documentElement.classList.toggle('dark', dark);
+  document.getElementById('theme-btn').classList.toggle('on', dark);
+}
+
+// 分段按钮：pill 平移 + 文字点亮（对齐 Compose 里 animateIntOffsetAsState 的效果）
+function setSeg(i){
+  const items = document.querySelectorAll('#seg .seg-item');
+  items.forEach((el,idx)=>el.classList.toggle('active', idx===i));
+  document.getElementById('seg-pill').style.transform = 'translateX(' + (i*60) + 'px)';
+}
+
+// 「选中课块 + 详情卡」演示：mousedown 立即高亮（对齐 onPress 内先 onSelect 的实现）
+function toggleGridSelect(){
+  const block = document.getElementById('sel-block');
+  const card  = document.getElementById('detail-card');
+  const fab   = document.getElementById('p2-fab');
+  const on = block.classList.toggle('sel');
+  card.classList.toggle('show', on);
+  // FAB 随详情条一起上移，量 = 详情条总高（DETAIL_BAR_LIFT = 80dp）
+  if(fab){
+    // 按手机宽度换算 dp→px，保证与 Compose 的 80dp 视觉一致
+    const phone = card.closest('.phone').getBoundingClientRect().width;
+    const dp = phone / 411;            // Medium_Phone 宽约 411dp
+    fab.style.setProperty('--lift', (80 * dp) + 'px');
+    fab.classList.toggle('lifted', on);
+  }
+  // 非今日列时详情卡描边走灰 —— 这里演示的是周二（今天），所以保持蓝色
+  document.getElementById('grid-sel-btn').classList.toggle('on', on);
+}
+// 调色盘：点选某个色块 → 该块获得选中的对勾，其余清除。
+// 对勾颜色按底色亮度选黑/白，与 Compose 侧 NoteColorPicker 的 luminance 判断一致。
+const CHECK_DARK  = '<svg viewBox="0 0 24 24" style="stroke:#202124"><path d="M5 12.5l4.5 4.5L19 7"/></svg>';
+const CHECK_LIGHT = '<svg viewBox="0 0 24 24" style="stroke:#FFFFFF"><path d="M5 12.5l4.5 4.5L19 7"/></svg>';
+// 浅色主题下这些是较深的色值，需要白勾；深色主题反之。这里按每个色块的 rgb 亮度判断
+function pick(el){
+  // 从被点的色块往上找它所属的调色盘，再只清那一组 —— 页面上有两处调色盘，
+  // 早先写死 #palette 时第二处（⑧ 屏）点选不会清除上一枚对勾。
+  const box = el.closest('.palette') || document;
+  box.querySelectorAll('.swatch').forEach(function(s){
+    s.classList.remove('sel');
+    s.innerHTML = '';                                   // 先清掉上一枚对勾
+  });
+  el.classList.add('sel');
+  const m = el.style.background.match(/#(..)(..)(..)/);
+  let lum = .5;
+  if(m){
+    const r = parseInt(m[1],16), g = parseInt(m[2],16), b = parseInt(m[3],16);
+    lum = (0.2126*r + 0.7152*g + 0.0722*b) / 255;
+  }
+  el.innerHTML = lum > 0.55 ? CHECK_DARK : CHECK_LIGHT;
+}
+
+// 点课程块本身也能切换（模拟真实手势）
+document.getElementById('sel-block').addEventListener('mousedown', function(e){
+  e.preventDefault();
+  toggleGridSelect();
+});
+</script>
+</body>
+</html>

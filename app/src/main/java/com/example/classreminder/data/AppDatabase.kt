@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [ClassEntity::class, NoteEntity::class], version = 6, exportSchema = false)
+@Database(entities = [ClassEntity::class, NoteEntity::class], version = 7, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun classDao(): ClassDao
     abstract fun noteDao(): NoteDao
@@ -74,13 +74,34 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v6 → v7：便签支持**分类**与 **Deadline 截止时刻**。
+         *
+         * 一次加三列，都用 ALTER TABLE + 默认值，**老便签一条都不丢**：
+         *  - `typeIndex` 默认 0，正好落在分类表的第 0 项「空」上，语义天然正确
+         *  - `customLabel` 默认 ''，只有「自定义 / Deadline 自定义」两类会写它
+         *  - `deadlineAt` 默认 0，表示「没设截止时刻」
+         *
+         * 三列的声明必须和 NoteEntity 完全一致（类型 / NOT NULL / 默认值），
+         * 否则 Room 打开库时 schema 校验会失败。
+         */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE notes ADD COLUMN typeIndex INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE notes ADD COLUMN customLabel TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE notes ADD COLUMN deadlineAt INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {            return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "class_reminder_db"
                 )
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(
+                        MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7
+                    )
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

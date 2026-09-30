@@ -53,25 +53,50 @@ export PATH="$JAVA_HOME/bin:$PATH"
      `listState.layoutInfo.visibleItemsInfo[].offset..offset+size`（同一坐标系），命中卡片就不执行 deselect。
 
 ## 实机验证（adb）要点
-- **点击坐标必须按设备分辨率换算**：本项目设备 `wm size` = 1080x2400，
-  而截图/预览图常是 480x1200 → 换算比 **2.25**。
-  **最可靠：先 `uiautomator dump` 读真实 `bounds`，取中心点点击。**
-- 常用坐标（1080x2400）：底部导航「今天」(159,2310)、「课表」(417,2310)、「便签」(722,2310)、「设置」(1011,2310)。
-- `uiautomator dump` 偶发失败（拉不到文件），重试一次即可。
+- **点击坐标必须先 `uiautomator dump` 读真实 `bounds` 取中心，不要按历史分辨率硬算。**
+  本机 AVD `Medium_Phone` 实际 `wm size` = **1272x2800，density 560**（早期记录 1080x2400 是另一台 AVD）。
+- 本机真实坐标（1272x2800）：底部导航「今天」(148,2662)、「课表」(473,2662)、「便签」(798,2662)、「设置」(1123,2662)。
+  对话框：「保存」(978,1537)、「取消」(715,1537)、分类第一行 y=1180 / 第二行 y=1315。
+  FAB `[1020,2120]-[1216,2316]` 中心 (1118,2218)。
+- `uiautomator dump` 偶发失败（拉不到文件），重试一次即可。`adb pull` 需前缀 `MSYS_NO_PATHCONV=1`。
 - **双击**：`adb shell "input tap X Y; input tap X Y"` 两进程开销可能超 300ms 窗口 → 不成立。
-  最稳路径是「单击选中 → 点左下角浮出的『编辑』按钮」。
+  最稳路径是「单击选中 → 点左下角浮出的『编辑』按钮」（或直接改库造数据）。
+- **`adb shell input text` 只支持 ASCII** —— 中文输入无效，测试数据请用 `Note-A` 之类。
+- **长链 `adb && sleep && adb` 偶发 `Error: sandbox-center cmd decisionRecord missing actual resource subject`**，拆成单条即可。
 - **logcat 为空不代表工具坏**：先 `adb shell log -t TEST hello` 自证；若 shell 日志能读到，
   那就是应用真的没打日志（代码没执行到）。
 - app 偶发进入「UI 完全无响应」的僵死态（截图 md5 不变、CPU 0%、`top` 的 `TIME+` 不涨）→
   `am force-stop` + 重启即可，不是代码问题。
 
+## ★ WAL 模式下改设备数据库（模拟器无 root、无 sqlite3）
+1. `run-as com.example.classreminder base64 databases/<db>` 逐个导出**三个**文件：主库 + `-wal` + `-shm`
+   （只导主库会 `database disk image is malformed`）。用 `tr -d '\r'` 清换行污染。
+2. 本地 Python `sqlite3` 打开主库（会自动 checkpoint 合并 WAL）→ 改数据 → 备份。
+3. `am force-stop` 应用。
+4. 推回时**必须用 stdin 管道**：`adb shell "run-as ... base64 -d > databases/<db>" < xxx.b64`
+   —— 把 base64 当命令行参数会 `Argument list too long`。
+5. 推回前先 `rm -f` 两个辅助文件（`-wal` / `-shm`），再重启 App。
+- 不要用 `tar` 导出：二进制流会被 Windows 换行破坏（`tar: Skipping to next header`）。
+- 像素级验证：`pip install pillow` 到隔离 venv
+  `C:/Users/Administrator/.workbuddy-ai/binaries/python/envs/default/Scripts/python.exe`，读 RGB 判定底纹/配色是否真的生效。
+
 ## 已知技巧
+- **★ `LazyColumn` 的 content lambda 是 `LazyListScope`，不是 `@Composable`，里面不能调 `remember`。**
+  写 `remember` 在 `items(...)` 之间会报 `@Composable invocations can only happen from the context of a @Composable function`。
+  修法：把 `remember` 提到 `LazyColumn` **之外**，lambda 里只引用算好的值。
+- **★ `import androidx.compose.material3.*` 会撞平台同名类**：`DatePickerDialog` / `TimePickerDialog`
+  会被解析成 material3 的同名 `@Composable`（参数表完全不同）。修法：**别名导入**
+  `import android.app.DatePickerDialog as SysDatePickerDialog`。
 - `LocalDensity.current` **不能写在 `remember` 内部**（Composable 调用不允许）；
   要提到外面并作为 key，`toPx()` 用 `with(density) { ... }`。
 - 网格渲染性能：传给 `GridCell` 的必须是布尔/数值（不要传每帧变的 `mapping` 或块高），
   点击回调收数据对象而非闭包，否则每帧重组。
 - `pointerInput(key)` 的 block 只在 key 变化时重建，内部闭包会「冻」在创建那刻；
   读外部状态要用 `rememberUpdatedState` 包一层，或像 `wasSelectedAtPress` 那样用局部 var。
+- **深浅判定统一用 `MaterialTheme.colorScheme.surface.luminance() < 0.5f`**
+  （`notePalette()` 与课表底纹都走这一套，别引入第二套标准）。
+- **同一 α 在深浅两套主题下的感知强度不等价**：浅色是「深灰压白」、深色是「浅灰提黑」，
+  后者天然更弱。需要观感对齐时，深色要**单独给一套略高的 α**（如斑马纹 0.03 → 0.06）。
 
 ## Git
 - 凭据 helper 路径（`~/.gitconfig` 里 `credential.helper` 为空，禁用了所有 helper）：
