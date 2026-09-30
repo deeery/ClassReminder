@@ -30,6 +30,11 @@ export PATH="$JAVA_HOME/bin:$PATH"
 - **深色下「需要品牌蓝、但字号小」的地方用 `GoogleBlueLight`（`#8AB4F8`）** —— 主色 `#1A73E8`
   对深色卡片只有 3.8:1，小字发闷；纯白又太素（用户原话「寡淡」）。命名色值收在 `Theme.kt`，别再各自硬编码。
 - 首屏问候语：**38sp / `FontWeight.Light` / lineHeight 46sp**（40sp 是上限，窄屏「早上好。」会折行）。
+- **轻量动画统一只动 `graphicsLayer`（alpha / scale / translationX/Y），不碰测量与布局** ——
+  `AnimatedVisibility` 的 expand/shrink 会改高度、触发 `LazyColumn` 重新测量，首屏叠加就会掉帧（v3.12 的教训）。
+- **跨 Tab 存活的「一次性」UI 状态要放进程级单例**（如 `TodayEnterState.played`）：切 Tab 会销毁重建页面，
+  `remember` 活不过那一次切换。今天页入场动画就靠它做到「本进程只播一次」；
+  不播时 `Animatable` 初值直接给 `1f`，避免「补一段 0 时长动画」。
 - 浅深两套色**必须分别标定 α**：同一个 α 在深背景常失效（如 `onSurface` 与 `surface` 仅差 1.78:1）。
   深色下的描边 / 高亮一律走「主色 + 逐级透明度」，不要用灰。
 - 高亮分级收敛在 `HighlightSpec.of()`（`maxOf` 取最强档，不叠加）。

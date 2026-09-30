@@ -1288,11 +1288,39 @@ fun BottomNavigationBar(
             tonalElevation = 0.dp
         ) {
             items.forEachIndexed { index, item ->
+                val isSelected = selectedTab == index
+                // 选中项的图标轻微放大、文字轻微上提 —— 两者都只写在 graphicsLayer 上，
+                // 不参与测量与布局，所以底栏高度不会跟着抖（这是「轻量」的关键）
+                val iconScale by animateFloatAsState(
+                    targetValue = if (isSelected) 1.12f else 1f,
+                    animationSpec = tween(HOVER_MS),
+                    label = "navIconScale"
+                )
+                val labelLift by animateFloatAsState(
+                    targetValue = if (isSelected) -1.5f else 0f,
+                    animationSpec = tween(HOVER_MS),
+                    label = "navLabelLift"
+                )
                 NavigationBarItem(
-                    selected = selectedTab == index,
+                    selected = isSelected,
                     onClick = { onTabSelected(index) },
-                    icon = { Icon(item.icon, contentDescription = item.label) },
-                    label = { Text(item.label, fontSize = 11.sp) },
+                    icon = {
+                        Icon(
+                            item.icon,
+                            contentDescription = item.label,
+                            modifier = Modifier.graphicsLayer {
+                                scaleX = iconScale
+                                scaleY = iconScale
+                            }
+                        )
+                    },
+                    label = {
+                        Text(
+                            item.label,
+                            fontSize = 11.sp,
+                            modifier = Modifier.graphicsLayer { translationY = labelLift.dp.toPx() }
+                        )
+                    },
                     // M3 的选中指示器是 primaryContainer 胶囊 + primary 图标/文字。
                     // 深色下文字改白（见上面 isDarkBar 的说明），浅色仍是主色
                     colors = NavigationBarItemDefaults.colors(
@@ -3197,10 +3225,17 @@ fun WeekGrid(
             // 单击课程块只是高亮，格子太窄放不下完整信息（教室、老师经常要截断）。
             // 所以选中后在网格下方浮出一条详情：把这一节的信息补齐，并明确提示「双击编辑」——
             // 否则用户点了一下、什么都没发生（除了变蓝），会以为这个应用坏了。
+            // 从网格下方**滑上来**，而不只是「展开」：展开负责让高度平滑变化、
+            // 不把上面的网格顶得一跳；滑入负责给出「它从下面浮出来」的方向感。
+            // 两者叠在一起 = 一边长高一边上移，读起来就是「从底边升起来」
             AnimatedVisibility(
                 visible = selectedClass != null,
-                enter = fadeIn(tween(ENTER_MS)) + expandVertically(tween(ENTER_MS), expandFrom = Alignment.Top),
-                exit = fadeOut(tween(EXIT_MS)) + shrinkVertically(tween(EXIT_MS), shrinkTowards = Alignment.Top)
+                enter = fadeIn(tween(ENTER_MS)) +
+                    expandVertically(tween(ENTER_MS), expandFrom = Alignment.Top) +
+                    slideInVertically(tween(ENTER_MS)) { it / 2 },
+                exit = fadeOut(tween(EXIT_MS)) +
+                    shrinkVertically(tween(EXIT_MS), shrinkTowards = Alignment.Top) +
+                    slideOutVertically(tween(EXIT_MS)) { it / 2 }
             ) {
                 selectedClass?.let { cls ->
                     ClassDetailCard(

@@ -24,11 +24,12 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -36,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -115,6 +117,23 @@ fun TodayScreen(
     val pickedNotes = remember(notes) { TodayNotePicker.pick(notes) }
     val showNotesMore = remember(notes) { TodayNotePicker.needsMoreRow(notes) }
 
+    // ── 首屏入场（本进程只播一次）──
+    // 各区块从**右侧**依次滑入 + 淡入，每块错峰 40ms。
+    //
+    // 「只播一次」落在进程级单例 TodayEnterState 上：切 Tab 会把 TodayScreen 销毁重建，
+    // remember 活不过那一次切换。首次进来 playEnter = true（播），之后每次都是 false（直接到位）。
+    //
+    // **只动 graphicsLayer 的 alpha / translationX，不用 AnimatedVisibility**：
+    // 后者会让内容从 0 高度展开，触发 LazyColumn 重新测量 —— 首屏本来就要排一次版，
+    // 再叠一层高度动画，正是 v3.12 那类掉帧的配方。graphicsLayer 只改绘制属性，不碰布局。
+    val playEnter = remember { !TodayEnterState.played }
+    LaunchedEffect(Unit) { TodayEnterState.played = true }
+
+    // 错峰序号。滚动中的条目不播动画，所以只要保证首屏这几块的先后对就行
+    val notesHeaderOrder = 2 + rest.size
+    val notesOrder = notesHeaderOrder + 1
+    val notesMoreOrder = notesOrder + pickedNotes.size
+
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
@@ -122,29 +141,35 @@ fun TodayScreen(
     ) {
         // ── 1. 主卡：当前 / 下一节课；空闲时是「当前空闲」卡 ──
         item(key = "featured") {
-            when {
-                idle -> IdleCard(next = next!!, now = now)
-                featured != null -> FeaturedClassCard(
-                    entry = featured,
-                    ongoing = current != null,
-                    now = now,
-                    onClick = { onOpenClass(featured.entity) }
-                )
-                else -> EmptyTodayCard(
-                    hasClassToday = today.isNotEmpty(),
-                    hasNotes = notes.isNotEmpty()
-                )
+            EnterIn(play = playEnter, order = 0) {
+                when {
+                    idle -> IdleCard(next = next!!, now = now)
+                    featured != null -> FeaturedClassCard(
+                        entry = featured,
+                        ongoing = current != null,
+                        now = now,
+                        onClick = { onOpenClass(featured.entity) }
+                    )
+                    else -> EmptyTodayCard(
+                        hasClassToday = today.isNotEmpty(),
+                        hasNotes = notes.isNotEmpty()
+                    )
+                }
             }
         }
 
         // ── 2. 今天剩余 ──
         if (rest.isNotEmpty()) {
             item(key = "rest-header") {
-                SectionLabel(if (current != null) "接下来" else "今天的课")
+                EnterIn(play = playEnter, order = 1) {
+                    SectionLabel(if (current != null) "接下来" else "今天的课")
+                }
             }
             items(rest.size, key = { rest[it].entity.id }) { index ->
                 val entry = rest[index]
-                UpcomingRow(entry = entry, onClick = { onOpenClass(entry.entity) })
+                EnterIn(play = playEnter, order = 2 + index) {
+                    UpcomingRow(entry = entry, onClick = { onOpenClass(entry.entity) })
+                }
             }
         }
 
@@ -155,15 +180,61 @@ fun TodayScreen(
         // 里面放不了 remember。
         if (notes.isNotEmpty()) {
             item(key = "notes-header") {
-                SectionLabel("便签 · ${notes.size} 条", onClick = onOpenNotes)
+                EnterIn(play = playEnter, order = notesHeaderOrder) {
+                    SectionLabel("便签 · ${notes.size} 条", onClick = onOpenNotes)
+                }
             }
             items(pickedNotes.size, key = { "note-" + pickedNotes[it].id }) { index ->
-                NoteSummaryRow(pickedNotes[index], now = now, onClick = onOpenNotes)
+                EnterIn(play = playEnter, order = notesOrder + index) {
+                    NoteSummaryRow(pickedNotes[index], now = now, onClick = onOpenNotes)
+                }
             }
             if (showNotesMore) {
-                item(key = "notes-more") { NoteSummaryMoreRow(onClick = onOpenNotes) }
+                item(key = "notes-more") {
+                    EnterIn(play = playEnter, order = notesMoreOrder) {
+                        NoteSummaryMoreRow(onClick = onOpenNotes)
+                    }
+                }
             }
         }
+    }
+}
+
+/**
+ * 「今天页的首屏入场动画是否已经播过」。
+ *
+ * 放在**进程级单例**里，而不是 `remember`：`TodayScreen` 在切 Tab 时会被销毁重建，
+ * `remember` 活不过那一次切换，而这里要的恰恰是「本进程只播一次」。
+ */
+private object TodayEnterState {
+    var played = false
+}
+
+/**
+ * 首屏入场：淡入 + 从**右侧** 28dp 滑进来，[order] 用来错峰（每档 40ms）。
+ *
+ * [play] 为 false 时直接以最终状态出现、一个动画都不起 —— 非首次进入今天页走的就是这条路径，
+ * 所以「只播一次」是**真的零开销**，而不是「播了一段 0 时长的动画」。
+ *
+ * 动画只写在 `graphicsLayer` 上（alpha / translationX），不参与测量与布局，
+ * 所以整段入场期间 `LazyColumn` 一次都不会重新测量。
+ */
+@Composable
+private fun EnterIn(play: Boolean, order: Int, content: @Composable () -> Unit) {
+    // 不播的时候初值直接给 1f，避免「从 0 补一段动画」冒出来
+    val progress = remember { Animatable(if (play) 0f else 1f) }
+    LaunchedEffect(play) {
+        if (!play) return@LaunchedEffect
+        delay(order * 40L)
+        progress.animateTo(1f, tween(ENTER_MS))
+    }
+    Box(
+        modifier = Modifier.graphicsLayer {
+            alpha = progress.value
+            translationX = (1f - progress.value) * 28.dp.toPx()
+        }
+    ) {
+        content()
     }
 }
 
