@@ -172,8 +172,13 @@ class SyncEngine(
     }
 
     private suspend fun runSyncOnIo(): SyncState {
-        val token = accountSession.token()
-        if (token.isNullOrBlank()) {
+        // ⚠️ 这里**不能**用 `accountSession.token()`。它只是「存下来的 access」，
+        // 而 access 的寿命只有 15 分钟 —— 登录一刻钟之后，每次同步都拿着过期令牌去请求，
+        // 服务端一律回 401，界面显示「登录已失效，请重新登录」；
+        // 可用户手里的 refresh 完全有效，让他重新登录纯属误报。
+        // 下面两个网络调用都改走 `accountSession.authed { }`：它先判断过期并自动轮转，
+        // 遇到 401 还会强刷一次再重试。
+        if (!accountSession.isSignedIn()) {
             val result = _state.value.copy(
                 phase = SyncPhase.SKIPPED,
                 message = "未登录，登录后自动同步"
@@ -187,7 +192,8 @@ class SyncEngine(
         return try {
             // ── 1. push（必须先push） ─────────────────────────
             val localChanges = collectLocalChanges()
-            val push = if (localChanges.isEmpty()) null else SyncApi.push(localChanges, token)
+            val push = if (localChanges.isEmpty()) null
+            else accountSession.authed { t -> SyncApi.push(localChanges, t) }
 
             // ⚠️ 这里**必须**写 `== true`，不能写 `!= false` 或直接用。
             // 服务端的 `isInitialDevice` 是**三态**的：
@@ -221,7 +227,7 @@ class SyncEngine(
             var guard = 0
             var hasMore = true
             while (hasMore && guard++ < 1000) {
-                val page = SyncApi.pull(cursor = cursor, token = token)
+                val page = accountSession.authed { t -> SyncApi.pull(cursor = cursor, token = t) }
                 incoming += page.changes
                 cursor = page.cursor
                 serverCursor = page.cursor

@@ -620,6 +620,9 @@ fun MainScreen(
     var searchQuery by remember { mutableStateOf("") }
     // 0=今天, 1=课表, 2=便签, 3=设置；启动时接着上次停留的非设置页
     var selectedTab by remember { mutableStateOf(Prefs.getLastTab(ctx)) }
+    // 设置页各分组的展开状态。**只活在内存里** —— 关闭进程即回到默认（账号置顶、其余折叠）。
+    // 提在这里而不是设置页内部，是因为切 Tab 会把设置页整个销毁。详见 SettingsSectionState。
+    val settingsSections = remember { SettingsSectionState() }
     // 「今天」页的顶栏要跟着走字：问候语（早上好 / 午安 / …）跨档时要自己换，
     // 日期副标题也一样。所以这里留一个每 30 秒刷新一次的「现在」。
     // 和 TodayScreen 内部那份是分开的：顶栏属于 Scaffold，没法读 TodayScreen 的局部状态。
@@ -968,6 +971,7 @@ fun MainScreen(
                     accountSession = accountSession,
                     syncEngine = syncEngine,
                     onSignInChanged = onSignInChanged,
+                    sections = settingsSections,
                     themeMode = themeMode,
                     onThemeModeChanged = onThemeModeChanged,
                     onRequestNotificationPermission = onRequestNotificationPermission,
@@ -4525,11 +4529,12 @@ fun WeekClassCard(
 // ── 设置页面（独立全屏） ──────────────────────────────────────────
 
 @Composable
-fun SettingsPage(
+internal fun SettingsPage(
     viewModel: MainViewModel,
     accountSession: AccountSession,
     syncEngine: SyncEngine,
     onSignInChanged: () -> Unit,
+    sections: SettingsSectionState,
     themeMode: Int,
     onThemeModeChanged: (Int) -> Unit,
     onRequestNotificationPermission: () -> Unit,
@@ -4551,9 +4556,21 @@ fun SettingsPage(
         item {
             Text("设置", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
 
+            // ── 账号 + 云同步（置顶，不折叠）──
+            // 这一块是设置页的主动作：用户进来十有八九是为了登录、或看同步到哪一步了。
+            // 把它折起来等于把门锁上，所以折叠只留给下面的次要设置。
+            accountAndSyncSection(
+                accountSession = accountSession,
+                syncEngine = syncEngine,
+                onSignedInChanged = onSignInChanged
+            )
+
             // ── 提醒 ──
-            SectionTitle("提醒")
-            SettingsCard {
+            CollapsibleSection(
+                title = "提醒",
+                expanded = sections.reminders,
+                onToggle = { sections.reminders = !sections.reminders }
+            ) {
                 OutlinedTextField(
                     value = advance,
                     onValueChange = { input ->
@@ -4599,8 +4616,11 @@ fun SettingsPage(
             }
 
             // ── 外观 ──
-            SectionTitle("外观")
-            SettingsCard {
+            CollapsibleSection(
+                title = "外观",
+                expanded = sections.appearance,
+                onToggle = { sections.appearance = !sections.appearance }
+            ) {
                 ThemeMode.entries.forEachIndexed { index, mode ->
                     val picked = themeMode == index
                     // 选中的那一行铺一层淡主色，切换时淡入淡出，光标落到哪一行一眼看得出
@@ -4633,8 +4653,11 @@ fun SettingsPage(
             }
 
             // ── 通知权限 ──
-            SectionTitle("通知权限")
-            SettingsCard {
+            CollapsibleSection(
+                title = "通知权限",
+                expanded = sections.notification,
+                onToggle = { sections.notification = !sections.notification }
+            ) {
                 Text(
                     "没有通知权限时，锁屏提醒和前台服务都无法工作。",
                     fontSize = 12.sp,
@@ -4652,8 +4675,11 @@ fun SettingsPage(
 
             // ── 国内 ROM 的特有权限（ColorOS/OxygenOS/realme UI）──
             if (RomGuide.isOplus) {
-                SectionTitle("系统权限（${Build.MANUFACTURER}）")
-                SettingsCard {
+                CollapsibleSection(
+                    title = "系统权限（${Build.MANUFACTURER}）",
+                    expanded = sections.romGuide,
+                    onToggle = { sections.romGuide = !sections.romGuide }
+                ) {
                     Text(
                         "这几项是厂商特有权限，系统不提供查询和申请接口，只能手动开。" +
                             "不开的话：锁屏弹窗会被系统拦掉，提醒服务也可能被省电策略清掉。",
@@ -4676,8 +4702,11 @@ fun SettingsPage(
             }
 
             // ── 导入课表 ──
-            SectionTitle("导入课表")
-            SettingsCard {
+            CollapsibleSection(
+                title = "导入课表",
+                expanded = sections.importTimetable,
+                onToggle = { sections.importTimetable = !sections.importTimetable }
+            ) {
                 Text(
                     "支持教务系统导出的课表 PDF；同一门课重复导入会覆盖，不会重复添加。" +
                         "PDF 里没有具体时刻，导入后按默认作息推算（可在列表里逐条修改）。",
@@ -4691,21 +4720,19 @@ fun SettingsPage(
                 Spacer(Modifier.height(16.dp))
             }
 
-            // ── 账号 + 云同步 ──
-            // 放在「数据备份」**上面**：备份是本地操作、同步是跨设备操作，
-            // 用户一般先想「我的东西怎么到别的设备上」，再想「怎么导出文件」。
-            accountAndSyncSection(
-                accountSession = accountSession,
-                syncEngine = syncEngine,
-                onSignedInChanged = onSignInChanged
-            )
-
             // ── 数据备份：模块化导入 / 导出 ──
-            SectionTitle("数据备份")
-            BackupSection(
-                viewModel = viewModel,
-                onMessage = { message -> Toast.makeText(ctx, message, Toast.LENGTH_LONG).show() }
-            )
+            CollapsibleSection(
+                title = "数据备份",
+                expanded = sections.backup,
+                onToggle = { sections.backup = !sections.backup },
+                // BackupSection 内部自己就渲染了一张 SettingsCard，再套一层会变成卡片套卡片
+                wrapInCard = false
+            ) {
+                BackupSection(
+                    viewModel = viewModel,
+                    onMessage = { message -> Toast.makeText(ctx, message, Toast.LENGTH_LONG).show() }
+                )
+            }
         }
     }
 }
@@ -4997,6 +5024,89 @@ private fun backupFileName(module: BackupModule?): String {
 private fun formatBackupTime(millis: Long): String {
     if (millis <= 0L) return "未知"
     return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(millis))
+}
+
+/**
+ * 设置页各分组的展开 / 折叠状态。
+ *
+ * **刻意只活在内存里**：用 `remember` 而不是 `rememberSaveable`、也不写 `Prefs` ——
+ * 需求是「每次关闭进程就回到默认状态」（账号置顶常显，其余全部折叠）。
+ * 一旦落盘或走 saved instance state，系统杀掉进程后重建会把它恢复成上次的样子，
+ * 就违背了这个需求。
+ *
+ * **放在 `MainScreen` 而不是 `SettingsPage`**：设置页在 `when (selectedTab)` 里，
+ * 切到别的 Tab 会被整个销毁。状态若放在页面内部，「展开外观改个主题、去课表页看一眼
+ * 再回来」就会全折上 —— 那不是用户要的「关进程才重置」。
+ */
+internal class SettingsSectionState {
+    var reminders by mutableStateOf(false)
+    var appearance by mutableStateOf(false)
+    var notification by mutableStateOf(false)
+    var romGuide by mutableStateOf(false)
+    var importTimetable by mutableStateOf(false)
+    var backup by mutableStateOf(false)
+}
+
+/**
+ * 可折叠的设置分组：标题行整行可点，箭头用旋转表达展开 / 收起。
+ *
+ * 折叠方向沿用课表页那套约定 —— **展开时箭头朝上、折叠时朝下**
+ * （`KeyboardArrowUp` + `rotationZ = 0/180`）。同一个 App 里两处折叠控件
+ * 不能各用各的语义，否则用户要重新学一遍。
+ *
+ * 标题行单独给到 44dp 最小高度：原来的 [SectionTitle] 只有一行 13sp 文字，
+ * 高度约 39dp，作为**纯展示**没问题，但一旦变成可点区域就低于最小触控尺寸了。
+ */
+@Composable
+internal fun CollapsibleSection(
+    title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    /** `false` = 内容自己已经是一张卡（如数据备份），不要再套一层，否则卡片套卡片 */
+    wrapInCard: Boolean = true,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 14.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onToggle)
+            .heightIn(min = 44.dp)
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            color = scheme.primary,
+            modifier = Modifier.weight(1f)
+        )
+        val arrowRotation by animateFloatAsState(
+            targetValue = if (expanded) 0f else 180f,
+            animationSpec = tween(ENTER_MS),
+            label = "sectionArrow"
+        )
+        Icon(
+            imageVector = Icons.Default.KeyboardArrowUp,
+            contentDescription = if (expanded) "折叠$title" else "展开$title",
+            tint = scheme.primary.copy(alpha = 0.75f),
+            modifier = Modifier
+                .size(20.dp)
+                .graphicsLayer { rotationZ = arrowRotation }
+        )
+    }
+    AnimatedVisibility(
+        visible = expanded,
+        enter = fadeIn(tween(ENTER_MS)) +
+            expandVertically(tween(ENTER_MS), expandFrom = Alignment.Top),
+        exit = fadeOut(tween(EXIT_MS)) +
+            shrinkVertically(tween(EXIT_MS), shrinkTowards = Alignment.Top)
+    ) {
+        if (wrapInCard) SettingsCard(content = content) else Column(content = content)
+    }
 }
 
 /**

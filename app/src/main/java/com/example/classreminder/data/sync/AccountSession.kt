@@ -66,8 +66,14 @@ class AccountSession(private val context: Context) {
     /** 提前这么多秒就认为access 过期了，避免边界抖动 */
     private val refreshSkewSeconds = 60L
 
-    /** 同步引擎只需要这一个入口 */
-    fun token(): String? = currentTokens()?.accessToken
+    /**
+     * 这里**刻意不提供**「裸取 access」的入口（曾经有过一个 `token(): String?`）。
+     *
+     * 它太容易被图省事地直接用掉，而 access 的寿命只有 15 分钟 ——
+     * 实测后果是「登录一刻钟后同步全线 401，界面误报登录已失效让用户重新登录」，
+     * 而用户手里的 refresh 完全有效。
+     * 需要令牌一律走 [authed]（或 [freshAccessToken]）：它们会自己判断过期并轮转。
+     */
 
     /** 是否已登录。UI 用它决定显示「登录」还是「同步卡」。 */
     fun isSignedIn(): Boolean = currentTokens() != null
