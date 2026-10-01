@@ -212,17 +212,26 @@ private fun Avatar(user: AuthUser) {
 
 // ── 登录 / 注册表单 ─────────────────────────────────────────────
 
-private const val MODE_LOGIN = 0
-private const val MODE_REGISTER = 1
+internal const val MODE_LOGIN = 0
+internal const val MODE_REGISTER = 1
 
+/**
+ * 登录 / 注册表单。
+ *
+ * `internal` 而不是 `private`：首次运行引导也要用它（首启推荐登录/注册），
+ * 两个入口共用同一份表单，免得两处各写一套、改一处漏一处。
+ *
+ * @param initialMode 初始标签页，见 [MODE_LOGIN] / [MODE_REGISTER]。
+ */
 @Composable
-private fun AuthDialog(
+internal fun AuthDialog(
     session: AccountSession,
     onDismiss: () -> Unit,
-    onSuccess: () -> Unit
+    onSuccess: () -> Unit,
+    initialMode: Int = MODE_LOGIN
 ) {
     val scope = rememberCoroutineScope()
-    var mode by remember { mutableStateOf(MODE_LOGIN) }
+    var mode by remember { mutableStateOf(initialMode) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var invite by remember { mutableStateOf("") }

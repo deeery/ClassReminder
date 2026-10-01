@@ -18,16 +18,29 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.classreminder.data.MainViewModel
 import com.example.classreminder.data.sync.AppViewModel
+import com.example.classreminder.ui.AuthDialog
 import com.example.classreminder.ui.ClassReminderTheme
 import com.example.classreminder.ui.MainScreen
+import com.example.classreminder.ui.MODE_LOGIN
+import com.example.classreminder.ui.MODE_REGISTER
 import com.example.classreminder.ui.ThemeMode
 
 class MainActivity : ComponentActivity() {
@@ -150,22 +163,71 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     val showFirstRun = remember { mutableStateOf(Prefs.isFirstRun(this@MainActivity)) }
+                    // 首启引导里点「登录 / 注册」后要弹的登录框；null = 不显示。
+                    var firstRunAuthMode by remember { mutableStateOf<Int?>(null) }
 
                     if (showFirstRun.value) {
-                        AlertDialog(onDismissRequest = {
-                            Prefs.setFirstRunDone(this@MainActivity)
-                            showFirstRun.value = false
-                        }, title = { Text("首次运行") }, text = { Text("应用需要通知权限才能在上课前显示锁屏提醒。请在下个页面点击「启用提醒」按钮以授权。") }, confirmButton = {
-                            TextButton(onClick = {
+                        AlertDialog(
+                            // 点外部 / 返回键不算「选好了」：什么都不设，下次启动还会问。
+                            // 引导只该在用户明确表态（登录 or 游客）后才消失。
+                            onDismissRequest = { },
+                            title = { Text("欢迎使用 StuMate") },
+                            text = {
+                                Column {
+                                    Text("登录后课表与便签会在多设备间自动同步，换机或重装后数据能原样回来。")
+                                    Spacer(Modifier.height(10.dp))
+                                    // 通知权限说明是从旧版首启框继承下来的，别让它随改版消失：
+                                    // 提醒是这个 App 的主功能，权限没给等于白装。
+                                    Text(
+                                        "提醒功能需要通知权限，稍后在「设置 → 提醒」里点一下即可开启。",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            },
+                            confirmButton = {
+                                Button(onClick = { firstRunAuthMode = MODE_LOGIN }) {
+                                    Text("登录 / 注册")
+                                }
+                            },
+                            dismissButton = {
+                                // 游客入口：无边框、灰色的纯文本。视觉上明确「次要」，
+                                // 但不隐藏 —— 不登录也能完整使用本地功能。
+                                TextButton(
+                                    onClick = {
+                                        Prefs.setFirstRunDone(this@MainActivity)
+                                        showFirstRun.value = false
+                                    },
+                                    colors = ButtonDefaults.textButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                ) {
+                                    Text("先随便看看（游客）")
+                                }
+                            }
+                        )
+                    }
+
+                    firstRunAuthMode?.let { mode ->
+                        AuthDialog(
+                            session = appViewModel.accountSession,
+                            onDismiss = {
+                                firstRunAuthMode = null
+                                // 关掉登录框又没登成 = 还没做选择，保留引导下次再问。
+                                if (appViewModel.accountSession.isSignedIn()) {
+                                    Prefs.setFirstRunDone(this@MainActivity)
+                                    showFirstRun.value = false
+                                }
+                            },
+                            onSuccess = {
+                                firstRunAuthMode = null
                                 Prefs.setFirstRunDone(this@MainActivity)
                                 showFirstRun.value = false
-                            }) { Text("知道了") }
-                        }, dismissButton = {
-                            TextButton(onClick = {
-                                Prefs.setFirstRunDone(this@MainActivity)
-                                showFirstRun.value = false
-                            }) { Text("拒绝") }
-                        })
+                                // 主动登录 → 触发「强制对齐首端配置」（见 AppViewModel.onSignInChanged）。
+                                appViewModel.onSignInChanged()
+                            },
+                            initialMode = mode
+                        )
                     }
                     MainScreen(
                         viewModel = viewModel,

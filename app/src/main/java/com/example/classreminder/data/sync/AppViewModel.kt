@@ -88,14 +88,41 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * 已经处理过的「主动登录」序号，见 [AccountSession.loginEpoch]。
+     *
+     * 存在 ViewModel 上而不是 SyncEngine 上：ViewModel 活过旋转、
+     * 只在真正退出 Activity 时销毁，正好匹配「一次会话」的粒度。
+     */
+    private var handledLoginEpoch = 0
+
+    /**
      * 登录状态变化时调用：登录成功要立刻同步一次，登出要清游标。
      *
      * 用 `isSignedIn` 判断而不是直接比 `user`：登出时 `user` 会先被置空，
      * 而登录流程里 `user` 是拿到响应后才赋值 —— 两者时序不同，
      * 统一成「有没有令牌」这一个信号才不会漏触发。
+     *
+     * ## 两种「已登录」要分开处理
+     *
+     * - **启动恢复**（[bootstrap] 里那条路，不走这里）：接着用本机数据，不动它；
+     * - **用户主动登录**（走到这里）：把本地强制对齐到首端配置，
+     *   被覆盖的那份写进 `StuMate-preinit-backup-<时间戳>.json`。
+     *
+     * 区分靠 [AccountSession.loginEpoch] —— 只有 login / register 成功才自增。
+     * 如果拿「登录态变了」当信号，就会把「每次开软件」也变成「每次清库」。
      */
     fun onSignInChanged() {
-        if (accountSession.isSignedIn()) syncEngine.syncOnStart() else syncEngine.resetForSignOut()
+        if (!accountSession.isSignedIn()) {
+            syncEngine.resetForSignOut()
+            return
+        }
+        val epoch = accountSession.loginEpoch.value
+        if (epoch != handledLoginEpoch) {
+            handledLoginEpoch = epoch
+            syncEngine.syncAfterLogin()
+        } else {
+            syncEngine.syncOnStart()
+        }
     }
 
     // ── 首端切换前的自动备份 ──────────────────────────────────────

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>StuMate · 登录强制对齐 + 首启引导 验收页 v1.0（移动端）</title>
+<style>
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:32px 28px 56px;
+    font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+    background:#0f0f10; color:#e8e8e8;
+  }
+  h1{font-size:24px;font-weight:600;margin:0 0 6px}
+  .lead{font-size:13px;line-height:20px;color:#a0a0a0;margin:0 0 26px;max-width:980px}
+  h2.sec{font-size:15px;font-weight:600;margin:34px 0 12px;padding-bottom:8px;border-bottom:1px solid #2e2e2e}
+  .row{display:flex;flex-wrap:wrap;gap:20px}
+  figure{margin:0;border-radius:8px;border:1px solid #2e2e2e;overflow:hidden;background:#1a1a1a;width:290px}
+  figure img{display:block;width:100%;height:auto}
+  figcaption{padding:10px 12px 12px;font-size:12px;line-height:17px;color:#a0a0a0}
+  figcaption b{color:#e8e8e8;font-weight:600}
+  table{border-collapse:collapse;width:100%;font-size:13px;margin:0 0 8px}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid #2a2a2a;vertical-align:top}
+  th{font-weight:600;color:#c5c5c5;background:#1a1a1a}
+  code{font-family:"Cascadia Mono",Consolas,monospace;font-size:12px;background:#242424;padding:1px 5px;border-radius:3px}
+  pre{font-family:"Cascadia Mono",Consolas,monospace;font-size:12px;line-height:18px;
+      background:#1a1a1a;border:1px solid #2e2e2e;border-radius:6px;padding:12px 14px;overflow-x:auto;color:#d0d0d0}
+  .ok{color:#6CCB5F;font-weight:600}
+  .note{margin:12px 0 0;font-size:12px;line-height:18px;color:#a0a0a0;border-left:2px solid #404040;padding-left:10px}
+  ul{font-size:13px;line-height:21px;padding-left:20px;margin:6px 0}
+  .kv{font-size:13px;line-height:22px}
+</style>
+</head>
+<body>
+
+<h1>登录强制对齐首端配置 + 首启引导改版 · 验收页 v1.0</h1>
+<p class="lead">
+  移动端（Jetpack Compose M3 / Room 2.6.1 / Kotlin 1.9.20），Medium_Phone 模拟器真机验收。<br>
+  ① <b>每次主动登录</b>都强制把本地对齐到「最早登录那台设备」的配置，被覆盖的那份先备份；<br>
+  ② <b>首次启动</b>推荐登录 / 注册，但保留游客选项 —— 无边框灰字。
+</p>
+
+<h2 class="sec">一、四步实机链路（同一台模拟器，连续操作）</h2>
+<div class="row">
+  <figure>
+    <img src="emulator-firstrun.png" alt="首启引导">
+    <figcaption><b>① 首启引导</b><br>
+      「登录 / 注册」是主按钮（实心强调色）；「先随便看看（游客）」是
+      <b>无边框灰字</b>。通知权限说明从旧版首启框继承下来，没有随改版消失。</figcaption>
+  </figure>
+  <figure>
+    <img src="emulator-firstrun-guest.png" alt="点游客后">
+    <figcaption><b>② 点「游客」→ 引导消失</b><br>
+      直接进入完整可用的主界面。<code>first_run=false</code> 已落盘，下次启动不再问。</figcaption>
+  </figure>
+  <figure>
+    <img src="emulator-firstrun-login.png" alt="点登录后">
+    <figcaption><b>③ 点「登录 / 注册」→ 拉起登录框</b><br>
+      默认落在「登录」标签页。清空数据后重来一遍验证，不是同一次运行的截图。</figcaption>
+  </figure>
+  <figure>
+    <img src="emulator-firstrun-loggedin.png" alt="登录后">
+    <figcaption><b>④ 登录成功 → 强制对齐生效</b><br>
+      主界面出现「<b>便签 · 6 条</b>」—— 这 6 条是本次登录从服务端拉下来的，
+      本地此前是全新安装（刚 <code>pm clear</code> 过）。</figcaption>
+  </figure>
+</div>
+
+<h2 class="sec">二、落盘证据链（比界面截图更硬）</h2>
+<p class="kv">登录后用 <code>run-as</code> 直接读应用私有目录，三个文件互相印证：</p>
+<pre>shared_prefs/stumate_account.xml      → access/refresh 令牌非空，user id 17
+shared_prefs/stumate_sync.xml         → &lt;int name="cursor" value="83" /&gt;   （不是 0，说明全量拉过并推进了游标）
+files/StuMate-preinit-backup-*.json   → 被覆盖配置的备份（本次本地为空，故 count 为 0）</pre>
+<table>
+  <tr><th>证据</th><th>实测值</th><th>说明</th></tr>
+  <tr><td><code>stumate_account.xml</code></td>
+      <td class="ok">access_token / refresh_token 均有值</td>
+      <td>登录真的落盘了，不是界面上的假象</td></tr>
+  <tr><td><code>stumate_sync.xml</code></td>
+      <td class="ok">cursor = 83</td>
+      <td>若走了旧的「先 push 再 pull」或压根没拉，这里会是 0 或很小的值</td></tr>
+  <tr><td><code>StuMate-preinit-backup-20261001-175425.json</code></td>
+      <td class="ok">已生成</td>
+      <td>「备份被覆盖的配置」这条需求的可验证产物</td></tr>
+</table>
+
+<h2 class="sec">三、验证结果</h2>
+<table>
+  <tr><th>项</th><th>结果</th></tr>
+  <tr><td>编译 <code>compileDebugKotlin</code></td><td class="ok">BUILD SUCCESSFUL</td></tr>
+  <tr><td>单元测试 <code>testDebugUnitTest</code></td><td class="ok">153 / 153 通过，0 失败</td></tr>
+  <tr><td><code>assembleDebug</code></td><td class="ok">BUILD SUCCESSFUL</td></tr>
+  <tr><td>首启引导：游客路径</td><td class="ok">对话框消失，主界面可用，<code>first_run=false</code> 落盘</td></tr>
+  <tr><td>首启引导：登录路径</td><td class="ok">拉起 <code>AuthDialog</code>，默认「登录」标签页</td></tr>
+  <tr><td>登录强制对齐（端到端）</td><td class="ok">令牌落盘 + 游标推进到 83 + 备份文件生成 + 界面拉到 6 条便签</td></tr>
+</table>
+
+<h2 class="sec">四、本次改动</h2>
+<ul class="kv">
+  <li><code>MainActivity.kt</code> —— 首启引导改版：登录 / 注册为主，游客为无边框灰字；登录成功回调里触发对齐</li>
+  <li><code>data/sync/SyncEngine.kt</code> —— <code>syncAfterLogin()</code>、<code>runSync(forceAlign)</code> 第 0 步、<code>launchSyncDone</code> 守卫</li>
+  <li><code>data/sync/AccountSession.kt</code> —— <code>loginEpoch</code> / <code>markFreshLogin()</code></li>
+  <li><code>data/sync/AppViewModel.kt</code> —— <code>onSignInChanged()</code> 用 <code>loginEpoch</code> 区分启动恢复 / 主动登录</li>
+  <li><code>ui/AccountSyncSection.kt</code> —— <code>AuthDialog</code> / <code>MODE_LOGIN</code> / <code>MODE_REGISTER</code> 由 <code>private</code> 改 <code>internal</code>（跨文件复用）</li>
+</ul>
+
+<p class="note">
+  <b>新增的启动去重守卫：</b><code>MainActivity</code> 没有声明 <code>android:configChanges</code>，
+  旋转屏幕会重建 Activity → <code>onCreate</code> 再跑一遍 <code>bootstrap()</code> → 多同步一次。
+  多跑一次本身无害（服务端 <code>replace_local</code> 已改成一次性），但纯属浪费一次往返，
+  所以 <code>syncOnStart()</code> 也加了与桌面端同名的 <code>launchSyncDone</code> 幂等守卫。
+  手动同步走 <code>syncNow()</code>，不受影响。
+</p>
+
+</body>
+</html>

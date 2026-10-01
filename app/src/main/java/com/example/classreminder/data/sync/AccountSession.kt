@@ -61,6 +61,23 @@ class AccountSession(private val context: Context) {
     private val _user = MutableStateFlow<AuthUser?>(null)
     val user: StateFlow<AuthUser?> = _user.asStateFlow()
 
+    /**
+     * 「**用户主动登录**」计数器。每次 [login] / [register] 成功自增。
+     *
+     * ⚠️ [restore] **不动它** —— 那是「本机还留着凭证」，不是用户主动登录。
+     *
+     * 这个区分是必须的：同步引擎靠它决定「要不要把本地强制对齐到首端配置」，
+     * 而「每次开软件都对齐」＝「每次开软件都清一次库」—— 那正是 2026-10-02
+     * 刚修掉的缺陷（见 SyncEngine 里 replace_local 的注释）。
+     */
+    private val _loginEpoch = MutableStateFlow(0)
+    val loginEpoch: StateFlow<Int> = _loginEpoch.asStateFlow()
+
+    /** 标记一次「用户主动登录」；见 [loginEpoch] */
+    private fun markFreshLogin() {
+        _loginEpoch.value += 1
+    }
+
     private val refreshMutex = Mutex()
 
     /** 提前这么多秒就认为access 过期了，避免边界抖动 */
@@ -189,6 +206,9 @@ class AccountSession(private val context: Context) {
             refreshToken = tokensObj.str("refresh_token"),
             accessExpiresAt = tokensObj.str("access_expires_at")
         )
+        // 先记「主动登录」再落盘：登录态翻转时计数器必须已经是新值，
+        // 否则同步侧会把它当成「启动恢复」而漏掉强制对齐
+        markFreshLogin()
         persist(user, tokens)
         return user
     }

@@ -107,6 +107,9 @@ class SyncEngine(
     private val mutex = Mutex()
     private var debounceJob: Job? = null
 
+    /** [syncOnStart] 的一次性守卫；见该方法的 KDoc */
+    private var launchSyncDone = false
+
     companion object {
         /** 写操作后等这么久才真的同步（设计 §5.8） */
         const val DEBOUNCE_MS = 30_000L
@@ -143,10 +146,48 @@ class SyncEngine(
         }
     }
 
-    /** 应用启动时调用 */
+    /**
+     * 应用启动时调用（恢复登录态后接着用本机数据，**不动**它）。
+     *
+     * **同一个登录会话内最多生效一次**，与桌面端 `SyncEngine.startOnLaunch()`
+     * 的同名守卫对齐：`MainActivity` 没有声明 `configChanges`，旋转屏幕会重建
+     * Activity → `onCreate` 再跑一遍 `bootstrap()` → 这里会再同步一次。
+     * 多跑一次本身无害（`replace_local` 已改成一次性），但纯属浪费一次往返。
+     *
+     * 手动同步走 [syncNow]，不受这个守卫影响。
+     */
     fun syncOnStart() {
+        if (launchSyncDone) return
         if (!accountSession.isSignedIn()) return
+        launchSyncDone = true
         scope.launch { runSync() }
+    }
+
+    /**
+     * **用户主动登录后**调用：把本地强制对齐到服务端（＝首端设备）的配置。
+     *
+     * ## 和 [syncOnStart] 的区别只有一点：要不要对齐
+     *
+     * - 启动时恢复登录态 = 「接着用本机已有的数据」，**不动它**；
+     * - 用户主动登录 = 「我要用这个账号的配置」，这时本地那份可能来自
+     *   上一次登录的账号、也可能早就跟云端分叉了，所以要拉回正轨。
+     *
+     * 对齐的具体动作见 [runSyncOnIo] 的第 0 步：先问服务端有没有数据，
+     * 有就**跳过 push** 直接「备份 → 清空 → 全量拉」。被覆盖掉的那份本地配置
+     * 会写成 `StuMate-preinit-backup-<时间戳>.json`（见 `AppViewModel.writePreInitBackup`），
+     * 路径显示在同步卡上。
+     *
+     * ## 为什么不能拿「登录态变了」当触发信号
+     *
+     * 登录态在「启动恢复」和「主动登录」两种情况下都会从「未登录」变「已登录」，
+     * 拿它当信号会把「每次开软件」也变成「每次清库」。
+     * 所以调用方要用 [AccountSession.loginEpoch] 区分，见 `AppViewModel.onSignInChanged`。
+     */
+    fun syncAfterLogin() {
+        if (!accountSession.isSignedIn()) return
+        // 本次会话的「启动同步」已被它取代，别再让 syncOnStart 多跑一遍
+        launchSyncDone = true
+        scope.launch { runSync(forceAlign = true) }
     }
 
     /**
@@ -155,23 +196,25 @@ class SyncEngine(
      */
     fun resetForSignOut() {
         debounceJob?.cancel()
+        // 允许下一个登录会话再走一次启动同步
+        launchSyncDone = false
         prefs.lastCursor = 0
         _state.value = SyncState(phase = SyncPhase.SKIPPED, message = "未登录，登录后自动同步")
     }
 
     // ── 同步主体 ────────────────────────────────────────────────
 
-    private suspend fun runSync(): SyncState = mutex.withLock {
+    private suspend fun runSync(forceAlign: Boolean = false): SyncState = mutex.withLock {
         // ⚠️ Android 主线程禁止网络访问：HttpURLConnection 在主线程直接抛
         // NetworkOnMainThreadException，而**它的 message 是 null** ——
         // 下面的 catch 只能落到兜底文案，界面显示「同步失败」且没有任何线索。
         // SyncEngine 的 scope 是 viewModelScope（Dispatchers.Main.immediate），
         // 所以整个同步体（HTTP 请求 + 首端切换时的备份写盘）必须显式切到 IO。
         // 桌面端没有这个限制，这层包装是移动端特有的。
-        withContext(Dispatchers.IO) { runSyncOnIo() }
+        withContext(Dispatchers.IO) { runSyncOnIo(forceAlign) }
     }
 
-    private suspend fun runSyncOnIo(): SyncState {
+    private suspend fun runSyncOnIo(forceAlign: Boolean = false): SyncState {
         // ⚠️ 这里**不能**用 `accountSession.token()`。它只是「存下来的 access」，
         // 而 access 的寿命只有 15 分钟 —— 登录一刻钟之后，每次同步都拿着过期令牌去请求，
         // 服务端一律回 401，界面显示「登录已失效，请重新登录」；
@@ -189,22 +232,48 @@ class SyncEngine(
 
         _state.value = _state.value.copy(phase = SyncPhase.BUSY, message = "正在同步…")
 
-        return try {
-            // ── 1. push（必须先push） ─────────────────────────
-            val localChanges = collectLocalChanges()
-            val push = if (localChanges.isEmpty()) null
-            else accountSession.authed { t -> SyncApi.push(localChanges, t) }
+        var alignedToServer = false
 
-            // ⚠️ 这里**必须**写 `== true`，不能写 `!= false` 或直接用。
-            // 服务端的 `isInitialDevice` 是**三态**的：
-            //   true  = 我就是首端→ 不清空
-            //   false = 首端是别的设备 → 要清空
-            //   null  = 还没任何设备认领过（用户刚注册）→ **绝不能清空**，会白丢数据
-            // 而 pull / push 路由里写的是 `replaceLocal = (initial === false)`，
-            // 把 true 和 null 合并成了 false。所以这里收到的 false 是
-            // 「我是首端」或「还没人认领」两种情况 —— **都清不得**。
-            // 反过来写（凡非 true 就清）会在用户刚注册首跑时把本地数据全丢掉。
-            if (push?.replaceLocal == true) {
+        return try {
+            // ── 0. 登录对齐：先决定「本地这份分歧要不要推上去」 ──
+            //
+            // [syncAfterLogin] 的诉求是「让我这台设备显示**首端那台**的配置」。
+            // 如果照常先 push，本地这份分歧就会先污染服务端 —— 对齐也就落空了。
+            // 所以先问一次服务端有没有数据：
+            //   有   → 跳过 push，直接「备份 → 清空 → 全量拉」，
+            //          本地这份分歧只留在备份文件里
+            //   没有 → **必须**照常 push。否则 `initial_device_id` 永远是 null，
+            //          谁都成不了首端，之后所有设备都拿不到「以谁为准」的答案
+            var replaceNow = false
+            if (forceAlign) {
+                val status = accountSession.authed { t -> SyncApi.status(t) }
+                if (status.courses > 0 || status.notes > 0) {
+                    replaceNow = true
+                    alignedToServer = true
+                }
+            }
+
+            // ── 1. push（必须先push） ─────────────────────────
+            var localChanges: List<LocalChange> = emptyList()
+            var push: PushResult? = null
+            if (!replaceNow) {
+                localChanges = collectLocalChanges()
+                push = if (localChanges.isEmpty()) null
+                else accountSession.authed { t -> SyncApi.push(localChanges, t) }
+
+                // ⚠️ 这里**必须**写 `== true`，不能写 `!= false` 或直接用。
+                // 服务端的 `isInitialDevice` 是**三态**的：
+                //   true  = 我就是首端→ 不清空
+                //   false = 首端是别的设备 → 要清空
+                //   null  = 还没任何设备认领过（用户刚注册）→ **绝不能清空**，会白丢数据
+                // 而 pull / push 路由里写的是 `replaceLocal = (initial === false)`，
+                // 把 true 和 null 合并成了 false。所以这里收到的 false 是
+                // 「我是首端」或「还没人认领」两种情况 —— **都清不得**。
+                // 反过来写（凡非 true 就清）会在用户刚注册首跑时把本地数据全丢掉。
+                if (push?.replaceLocal == true) replaceNow = true
+            }
+
+            if (replaceNow) {
                 val backup = handleReplaceLocal()
                 // 备份路径要如实带到 UI 上：这一刻用户本地数据被清空了，
                 // 他必须知道去哪找那份备份才安心（设计 §5.8 要求「明确告知路径」）
@@ -252,7 +321,11 @@ class SyncEngine(
             val result = SyncState(
                 phase = SyncPhase.SUCCESS,
                 lastSyncedAt = System.currentTimeMillis(),
-                message = describe(localChanges.isNotEmpty(), applied, overridden, purged),
+                message = if (alignedToServer) {
+                    "已对齐首端配置 · 拉取 $applied 条"
+                } else {
+                    describe(localChanges.isNotEmpty(), applied, overridden, purged)
+                },
                 overriddenCount = overridden,
                 backupPath = _state.value.backupPath,
                 online = true
