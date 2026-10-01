@@ -44,7 +44,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** 便签的写操作全部串行化：否则连点时快照可能基于过期的列表，回撤会撤错一步 */
     private val noteMutex = Mutex()
 
+    /**
+     * 数据变更回调，在**每次成功写库之后**触发。
+     *
+     * ## 为什么用回调而不是在 ViewModel 里直接依赖 SyncEngine
+     *
+     * 让 ViewModel 直接持有 `SyncEngine` 会把「网络 + 30 秒防抖」拖进业务层，
+     * 纯逻辑单测就得先造一个带 Context 的引擎出来。
+     *
+     * 所以 ViewModel 只声明「我改完了」这个**信号**，具体做什么由 Activity 注入
+     * （通常是 `syncEngine.scheduleSync()`）。
+     * 触发时机统一挂在**写库之后** —— 挂之前会推一份还没落库的数据上去。
+     */
+    @Volatile
+    var onDataChanged: (() -> Unit)? = null
+
+    private fun notifyDataChanged() {
+        onDataChanged?.invoke()
+    }
+
     init {
+        loadClasses()
+        loadNotes()
+    }
+
+    /**
+     * 从库里重新读一遍，刷新界面。
+     *
+     * 同步引擎把远端变更落库后调用它 —— 否则数据进了库但界面还停在旧内容，
+     * 用户点开同步按钮看到「已同步」，课表却纹丝不动。
+     *
+     * 刻意**不**触发 [notifyDataChanged]：那是「本地写了数据」的信号，
+     * 会排一次防抖同步。而这里的数据本来就是从服务端拉来的，
+     * 再推回去是无意义的往返。
+     */
+    fun reloadFromDb() {
         loadClasses()
         loadNotes()
     }
@@ -66,6 +100,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             dao.insert(entity)
             _classes.value = dao.getAll()
+            notifyDataChanged()
         }
     }
 
@@ -74,6 +109,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             dao.delete(entity)
             _classes.value = dao.getAll()
+            notifyDataChanged()
         }
     }
 
@@ -133,6 +169,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         _classes.value = existing.toList()
+        // PDF 导入是**本地写入**，必须排一次同步，否则换台设备看不到这批课。
+        // （桌面端漏了这个触发点，属于已知缺陷，这里不跟着抄。）
+        notifyDataChanged()
     }
 
     // ── 快速便签的增删改与排序 ────────────────────────────────────────
@@ -150,6 +189,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _canUndo.value = true
                 op()
                 _notes.value = noteDao.getAll()
+                // 触发点挂在**锁内**、落库之后。
+                // 挂锁外的话，notifyDataChanged 可能在 op() 还没写完时就跑，
+                // 同步引擎会把一份旧数据推上去。
+                notifyDataChanged()
             }
         }
     }
@@ -293,6 +336,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 noteDao.deleteAll()
                 if (snapshot.isNotEmpty()) noteDao.insertAll(snapshot)
                 _notes.value = noteDao.getAll()
+                // 回撤也是**本地写入**：整表被换过一遍（insertAll 会刷新 updatedAt），
+                // 不排同步的话，别的设备仍停留在「已删除」的状态，
+                // 下次同步还会把被回撤的便签再删一次 —— 用户会觉得回撤「只生效了一会儿」。
+                notifyDataChanged()
             }
         }
     }

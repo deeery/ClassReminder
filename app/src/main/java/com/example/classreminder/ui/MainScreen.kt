@@ -113,6 +113,8 @@ import com.example.classreminder.R
 import com.example.classreminder.data.ClassEntity
 import com.example.classreminder.data.DEFAULT_NOTE_COLOR
 import com.example.classreminder.data.MainViewModel
+import com.example.classreminder.data.sync.AccountSession
+import com.example.classreminder.data.sync.SyncEngine
 import com.example.classreminder.data.NOTE_COLOR_COUNT
 import com.example.classreminder.data.NOTE_TYPE_DEADLINE
 import com.example.classreminder.data.NOTE_TYPE_NONE
@@ -589,6 +591,9 @@ private fun rememberPressScale(
 @Composable
 fun MainScreen(
     viewModel: MainViewModel,
+    accountSession: AccountSession,
+    syncEngine: SyncEngine,
+    onSignInChanged: () -> Unit,
     themeMode: Int,
     onThemeModeChanged: (Int) -> Unit,
     onRequestNotificationPermission: () -> Unit,
@@ -960,6 +965,9 @@ fun MainScreen(
                 )
                 else -> SettingsPage(
                     viewModel = viewModel,
+                    accountSession = accountSession,
+                    syncEngine = syncEngine,
+                    onSignInChanged = onSignInChanged,
                     themeMode = themeMode,
                     onThemeModeChanged = onThemeModeChanged,
                     onRequestNotificationPermission = onRequestNotificationPermission,
@@ -4519,6 +4527,9 @@ fun WeekClassCard(
 @Composable
 fun SettingsPage(
     viewModel: MainViewModel,
+    accountSession: AccountSession,
+    syncEngine: SyncEngine,
+    onSignInChanged: () -> Unit,
     themeMode: Int,
     onThemeModeChanged: (Int) -> Unit,
     onRequestNotificationPermission: () -> Unit,
@@ -4679,6 +4690,15 @@ fun SettingsPage(
                 }
                 Spacer(Modifier.height(16.dp))
             }
+
+            // ── 账号 + 云同步 ──
+            // 放在「数据备份」**上面**：备份是本地操作、同步是跨设备操作，
+            // 用户一般先想「我的东西怎么到别的设备上」，再想「怎么导出文件」。
+            accountAndSyncSection(
+                accountSession = accountSession,
+                syncEngine = syncEngine,
+                onSignedInChanged = onSignInChanged
+            )
 
             // ── 数据备份：模块化导入 / 导出 ──
             SectionTitle("数据备份")
@@ -4979,8 +4999,14 @@ private fun formatBackupTime(millis: Long): String {
     return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(millis))
 }
 
+/**
+ * 分组标题。与设置页其他卡片共用一套间距，单独抽出来是为了账号/同步两块也能沿用。
+ *
+ * 从 `private` 放宽成 `internal`：Kotlin 里 `private` 顶层函数是**文件私有**，
+ * `AccountSyncSection.kt` 拿不到。这里放开的只是可见性，行为没变。
+ */
 @Composable
-private fun SectionTitle(text: String) {
+internal fun SectionTitle(text: String) {
     Text(
         text = text,
         fontSize = 13.sp,
@@ -4991,7 +5017,7 @@ private fun SectionTitle(text: String) {
 }
 
 @Composable
-private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+internal fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
     val scheme = MaterialTheme.colorScheme
     // M3 规范里的「填充卡」：用容器色（surfaceVariant 就是浅色下最接近 surfaceContainer 的那一档），
     // 不投影、只描一条极淡的边。Google 设置页的分组卡就是这个形态。

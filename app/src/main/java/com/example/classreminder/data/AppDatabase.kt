@@ -6,11 +6,26 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.classreminder.data.sync.SyncDao
 
-@Database(entities = [ClassEntity::class, NoteEntity::class], version = 7, exportSchema = false)
+@Database(entities = [ClassEntity::class, NoteEntity::class], version = 8, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun classDao(): ClassDao
     abstract fun noteDao(): NoteDao
+
+    /**
+     * 同步专用的 DAO。
+     *
+     * 与 [ClassDao] / [NoteDao] **刻意并存**，不是替代关系：
+     * 业务 DAO 只看`deletedAt = 0`（软删的当不存在），而同步必须看到全部行 ——
+     * 墓碑不推上去的话，「我在桌面端删了」这条信息就丢了，
+     * 手机会把它当成还在的记录一直留着。
+     *
+     * 同理，业务 DAO 的写入会无条件刷新 `updatedAt = now`，
+     * 同步落库若走它就会和远端无限互相覆盖（每轮都以为自己更新）。
+     * 所以 [SyncDao] 只暴露原样写入的方法。
+     */
+    abstract fun syncDao(): SyncDao
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
@@ -93,6 +108,51 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v7 → v8：`classes` / `notes` 各补三列**同步元数据**（uid / updatedAt / deletedAt）。
+         *
+         * 为什么需要它们（设计方案 v1.3 §5.2 / §5.3）：
+         *  - 两端的本地主键都是应用自己分配的 `id: Int`（没有 autoGenerate），各自新建记录必然
+         *    撞号，不能拿来跨设备对齐 —— 所以新增 `uid`（UUIDv4）作为同步层的唯一标识，
+         *    **本地 DAO / UI 继续用 `id`**，现有查询逻辑一行都不用改。
+         *  - 没有 `deletedAt` 的话，「A 删除 → B 不知情 → 下次同步又推回来」会导致**数据复活**，
+         *    所以删除改成打标记（见 DAO）。
+         *
+         * 老库里的行没有 uid，这里**逐行补一个并固化落库**。
+         * 绝不能留到运行时惰性生成：那样每次启动都会换一批 uid，同步层会把它们当成一批新记录，
+         * 历史数据就被复制了。
+         *
+         * 三列的声明必须和实体完全一致（类型 / NOT NULL / 默认值），
+         * 否则 Room 打开库时 schema 校验会失败。
+         */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                for (table in listOf("classes", "notes")) {
+                    db.execSQL("ALTER TABLE `$table` ADD COLUMN `uid` TEXT NOT NULL DEFAULT ''")
+                    db.execSQL("ALTER TABLE `$table` ADD COLUMN `updatedAt` INTEGER NOT NULL DEFAULT 0")
+                    db.execSQL("ALTER TABLE `$table` ADD COLUMN `deletedAt` INTEGER NOT NULL DEFAULT 0")
+                    backfillUids(db, table)
+                }
+            }
+        }
+
+        /**
+         * 给表里所有 uid 为空的行补一个 UUIDv4。
+         *
+         * 这里不再开事务：Room 已经把整个迁移包在事务里了，
+         * 嵌套 `beginTransaction` 在 SQLite 上会抛「cannot start a transaction within a transaction」。
+         */
+        private fun backfillUids(db: SupportSQLiteDatabase, table: String) {
+            val ids = ArrayList<Long>()
+            db.query("SELECT `id` FROM `$table` WHERE `uid` IS NULL OR `uid` = ''").use { c ->
+                while (c.moveToNext()) ids += c.getLong(0)
+            }
+            if (ids.isEmpty()) return
+            ids.forEach { id ->
+                db.execSQL("UPDATE `$table` SET `uid` = ? WHERE `id` = ?", arrayOf<Any>(newUid(), id))
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {            return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
@@ -100,7 +160,8 @@ abstract class AppDatabase : RoomDatabase() {
                     "class_reminder_db"
                 )
                     .addMigrations(
-                        MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7
+                        MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
+                        MIGRATION_7_8
                     )
                     .fallbackToDestructiveMigration()
                     .build()

@@ -12,6 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.viewModels
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,20 +25,40 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import com.example.classreminder.data.MainViewModel
+import com.example.classreminder.data.sync.AppViewModel
 import com.example.classreminder.ui.ClassReminderTheme
 import com.example.classreminder.ui.MainScreen
 import com.example.classreminder.ui.ThemeMode
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
+
+    /**
+     * 账号会话与同步引擎跟着 Activity 生命周期活着。
+     *
+     * 用 `by viewModels()` 的写法（引擎本身不持有 Activity 引用）是为了
+     * 旋转屏幕时不重建 —— 重建会丢掉正在跑的同步和已推进的游标。
+     * 引擎内部跑网络都用 `lifecycleScope`，Activity 真正销毁时协程会自动取消。
+     */
+    private val appViewModel: AppViewModel by viewModels()
+
     private lateinit var requestPermissionLauncher: ActivityResultLauncher<String>
     private lateinit var importPdfLauncher: ActivityResultLauncher<Array<String>>
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Hide the platform ActionBar so Compose TopAppBar is the only app bar
         try {
             actionBar?.hide()
         } catch (_: Exception) {}
+
+        // 登录态恢复 + 启动同步，**顺序不能反**：
+        // 先恢复会话再同步，反过来的话 syncOnStart 会看到「未登录」直接跳过，
+        // 于是这次启动永远不同步（要等用户手动点一次）。
+        appViewModel.bootstrap(lifecycleScope)
+        // 把「本地写完了 → 排一次防抖同步」和「远端落库了 → 刷新界面」这两根线接好。
+        // 只接一次；重复调用会覆盖成同一个闭包，效果相同但没必要。
+        appViewModel.attachDataViewModel(viewModel)
 
         // Permission launchers: assign to activity properties so lambdas passed to Compose remain stable
         requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
@@ -148,6 +169,9 @@ class MainActivity : ComponentActivity() {
                     }
                     MainScreen(
                         viewModel = viewModel,
+                        accountSession = appViewModel.accountSession,
+                        syncEngine = appViewModel.syncEngine,
+                        onSignInChanged = { appViewModel.onSignInChanged() },
                         themeMode = themeMode,
                         onThemeModeChanged = { newMode ->
                             themeMode = newMode

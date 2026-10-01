@@ -1,5 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 云同步与账号登录要访问 https://deeer.online。
+         ⚠️ 这是硬性前提：缺这条权限时下面所有网络调用都会抛
+         java.net.SocketException: Permission denied，
+         而异常会被 catch 成「同步失败」—— 看起来像网络问题，实则是权限没声明。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 同步要读得到服务端状态（首屏显示上次同步时间），
+         Android 9+ 默认禁止明文流量，域名是 https 所以不需要额外放开。 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <!-- Required to call startForeground() on Android 9+ -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Required for foregroundServiceType="dataSync" on Android 14+ -->

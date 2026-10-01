@@ -53,6 +53,22 @@ fun JsonValue.Obj.long(key: String, fallback: Long = 0L): Long =
 fun JsonValue.Obj.bool(key: String, fallback: Boolean = false): Boolean =
     (fields[key] as? JsonValue.Bool)?.value ?: fallback
 
+/**
+ * 读一个**三态**布尔：true / false / 字段不存在或为 null。
+ *
+ * 什么时候必须用它：服务端某些字段本身就是三态，最典型的是
+ * `is_initial_device`——
+ *   - `true`  = 我就是首端
+ *   - `false` = 首端是别的设备
+ *   - `null`  = 还没任何设备认领过
+ *
+ * 用 [bool] 读会把后两种都变成 `false`，于是「还没人认领」被误判成
+ * 「首端是别人」→ 客户端以为该清库 → **用户刚注册的数据被丢掉**。
+ * 这类判断必须写 `boolOrNull(key) == true`。
+ */
+fun JsonValue.Obj.boolOrNull(key: String): Boolean? =
+    (fields[key] as? JsonValue.Bool)?.value
+
 fun JsonValue.Obj.array(key: String): List<JsonValue> =
     (fields[key] as? JsonValue.Arr)?.items ?: emptyList()
 
