@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /** 同步的阶段。UI 据此决定显示什么文案、按钮是否可点。 */
 enum class SyncPhase {
@@ -161,6 +162,16 @@ class SyncEngine(
     // ── 同步主体 ────────────────────────────────────────────────
 
     private suspend fun runSync(): SyncState = mutex.withLock {
+        // ⚠️ Android 主线程禁止网络访问：HttpURLConnection 在主线程直接抛
+        // NetworkOnMainThreadException，而**它的 message 是 null** ——
+        // 下面的 catch 只能落到兜底文案，界面显示「同步失败」且没有任何线索。
+        // SyncEngine 的 scope 是 viewModelScope（Dispatchers.Main.immediate），
+        // 所以整个同步体（HTTP 请求 + 首端切换时的备份写盘）必须显式切到 IO。
+        // 桌面端没有这个限制，这层包装是移动端特有的。
+        withContext(Dispatchers.IO) { runSyncOnIo() }
+    }
+
+    private suspend fun runSyncOnIo(): SyncState {
         val token = accountSession.token()
         if (token.isNullOrBlank()) {
             val result = _state.value.copy(
@@ -168,12 +179,12 @@ class SyncEngine(
                 message = "未登录，登录后自动同步"
             )
             _state.value = result
-            return@withLock result
+            return result
         }
 
         _state.value = _state.value.copy(phase = SyncPhase.BUSY, message = "正在同步…")
 
-        try {
+        return try {
             // ── 1. push（必须先push） ─────────────────────────
             val localChanges = collectLocalChanges()
             val push = if (localChanges.isEmpty()) null else SyncApi.push(localChanges, token)
@@ -252,7 +263,10 @@ class SyncEngine(
         } catch (e: Exception) {
             val result = _state.value.copy(
                 phase = SyncPhase.FAILED,
-                message = e.message ?: "同步失败"
+                // 兜底文案带上异常类名。有些异常（NetworkOnMainThreadException 等）
+                // message 就是 null，只写「同步失败」等于把线索全丢了 ——
+                // 曾经因此把一个线程问题误判成「网络不通」，白查很久。
+                message = e.message ?: e::class.java.simpleName.ifBlank { "同步失败" }
             )
             _state.value = result
             result

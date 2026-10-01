@@ -21,7 +21,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -360,14 +359,16 @@ private fun AuthDialog(
         },
         confirmButton = {
             TextButton(onClick = { submit() }, enabled = canSubmit && !busy) {
-                if (busy) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp
-                    )
-                } else {
-                    Text(if (mode == MODE_LOGIN) "登录" else "注册")
-                }
+                // 不用 CircularProgressIndicator：material3 1.1.2 与 animation-core 1.6.0
+                // 存在 KeyframesSpecConfig.at() 的签名错配（NoSuchMethodError，必崩）。
+                // 文字态既规避了这个坑，也和卡片里其它状态文案保持一致的观感。
+                Text(
+                    when {
+                        !busy -> if (mode == MODE_LOGIN) "登录" else "注册"
+                        mode == MODE_LOGIN -> "登录中…"
+                        else -> "注册中…"
+                    }
+                )
             }
         },
         dismissButton = {
@@ -406,9 +407,13 @@ private fun ModeTab(
 @Composable
 private fun SyncCard(session: AccountSession, engine: SyncEngine) {
     val state by engine.state.collectAsState()
+    // 必须订阅 session.user，不能直接调 session.isSignedIn()：
+    // 后者是普通函数，值变了 Compose 没有任何理由重组这张卡 ——
+    // 实测表现是「刚登录完，账号卡已经是登录态，云同步卡还写着未登录」。
+    val user by session.user.collectAsState()
 
     SettingsCardCompat {
-        if (!session.isSignedIn()) {
+        if (user == null) {
             Text("未登录", fontSize = 15.sp, fontWeight = FontWeight.Medium)
             Text(
                 "登录后会自动在多台设备之间同步课程表与便签。" +
