@@ -4,6 +4,7 @@ import android.app.TimePickerDialog
 import android.app.TimePickerDialog as SysTimePickerDialog
 import android.app.DatePickerDialog as SysDatePickerDialog
 import android.os.Build
+import android.os.SystemClock
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -687,6 +688,23 @@ fun MainScreen(
     // 周次校准：存的是「第 1 周的周一」，改了它课表和提醒都会跟着变
     var week1Monday by remember { mutableStateOf(Prefs.getWeek1Monday(ctx)) }
     var showCalibrate by remember { mutableStateOf(false) }
+
+    // ── 首次有课表数据 → 提示校准周数 ──
+    //
+    // 触发条件刻意**不绑「导入」这个动作本身**：课表可能来自 PDF 导入、备份恢复、
+    // 或云同步拉下来，三条路都该提示。所以只看「库里第一次有课」这个事实。
+    //
+    // 用 Prefs 记一个一次性标记，弹过就不再弹 —— 用户当时选了「稍后」也不该反复打扰，
+    // 之后想校准可以去课表页点「校准周数」。
+    LaunchedEffect(classes) {
+        if (classes.isNotEmpty() &&
+            Prefs.getWeek1Monday(ctx) == 0L &&
+            !Prefs.isCalibratePrompted(ctx)
+        ) {
+            Prefs.setCalibratePrompted(ctx)
+            showCalibrate = true
+        }
+    }
     val currentWeek = remember(week1Monday) {
         if (week1Monday == 0L) null else WeekSchedule.weekNumber(week1Monday, System.currentTimeMillis())
     }
@@ -767,13 +785,14 @@ fun MainScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        // 宽屏时整条顶栏（连底带字）一起让开侧栏 ——
+                        // 侧栏现在占满整高，顶栏再横跨过去就是压在它头上。
+                        // 让出来的那块正好是侧栏自己（底色同为 surface），看不出接缝。
+                        .padding(start = if (wide) NAV_RAIL_WIDTH else 0.dp)
                         .background(MaterialTheme.colorScheme.surface)
                         .statusBarsPadding()
-                        // 宽屏时把标题让到侧栏右边，和下面的内容左边缘对齐。
-                        // **背景不跟着让**（.background 在上面、padding 在下面）——
-                        // 否则侧栏上方会缺一块，出现一条色块断层
                         .padding(
-                            start = 20.dp + if (wide) NAV_RAIL_WIDTH else 0.dp,
+                            start = 20.dp,
                             end = 20.dp,
                             top = 14.dp,
                             bottom = 16.dp
@@ -1004,17 +1023,28 @@ fun MainScreen(
         // **窄屏时这层 Row 只有一个孩子**，布局结果与改动前逐像素相同 ——
         // 这是「手机端零回归」能成立的关键：不是靠调参对齐，而是根本不参与布局。
         //
-        // ⚠️ Scaffold 的 padding 从里层的 Box 挪到了这层 Row 上。
-        // 因为侧栏是 Box 的**兄弟**，padding 只加在 Box 上的话，
-        // 侧栏会一直顶到系统状态栏 / 导航栏底下（它拿不到那些内边距）。
-        Row(modifier = Modifier.fillMaxSize().padding(padding)) {
+        // 🔴 Scaffold 的 padding **只加在内容 Box 上，不加在这层 Row 上**。
+        // 原先加在 Row 上，于是侧栏也被顶栏的高度推下去 ——
+        // 今天页有问候语、便签页有搜索栏，课表页与设置页没有，
+        // 切页时侧栏就跟着上下跳。用户要求「侧栏优先级大于顶栏」。
+        // 现在侧栏自己吃系统栏内边距、占满整高，顶栏碰不到它也推不动它。
+        Row(modifier = Modifier.fillMaxSize()) {
             if (wide) {
-                AppNavigationRail(
-                    selectedTab = selectedTab,
-                    isRunning = serviceRunning,
-                    currentWeek = currentWeek,
-                    onTabSelected = selectTab
-                )
+                // 侧栏不经过 Scaffold 的 padding，系统栏内边距得自己补，
+                // 否则会顶到状态栏 / 导航栏底下
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                ) {
+                    AppNavigationRail(
+                        selectedTab = selectedTab,
+                        isRunning = serviceRunning,
+                        currentWeek = currentWeek,
+                        onTabSelected = selectTab
+                    )
+                }
             }
             // 用 Box 而不是 Column：左下角操作区要浮在内容之上，得靠 align 定位
             Box(
@@ -1022,6 +1052,8 @@ fun MainScreen(
                     // weight 而不是固定宽度：导航栏宽度由它自己决定，内容区自动吃剩下的
                     .weight(1f)
                     .fillMaxSize()
+                    // 顶栏 / 底栏的高度只让**内容区**让开，侧栏不受影响
+                    .padding(padding)
             ) {
                 // 四个页面之间**瞬时切换**，不做过渡动画：
                 // 切页本身就要组合出新的一屏（课表那屏很重），再叠加过渡只会让这一帧更挤。
@@ -2004,46 +2036,56 @@ private fun NoteRow(
         // ── 底层：左滑露出来的方形编辑按钮。裁剪只做在这一层，免得把上层卡片的放大和阴影一起裁掉 ──
         //
         // **拖动时整层收起来**：长按拖动的过程中卡片会跟着手指上下走，而这一层是
-        // `matchParentSize` 钉在行上的，卡片一移开就会露出底下这个蓝色方块 ——
+        // 钉在行上的，卡片一移开就会露出底下这个蓝色方块 ——
         // 那不是用户划出来的，是「卡片让位」造成的假象，看着像误触发了编辑。
         // 所以只要 dragging 为真就整层不可见（连命中一起关掉，避免拖动中误点进编辑）。
         //
         // 用 AnimatedVisibility 而不是 if：划开 / 收起本来就有 180ms 的吸附动画，
         // 淡出能让「按钮消失」和卡片回位是同一件事，不会先「啪」地闪没。
-        AnimatedVisibility(
-            visible = !dragging,
-            enter = fadeIn(tween(EXIT_MS)),
-            exit = fadeOut(tween(EXIT_MS))
-        ) {
-            Box(
-                modifier = Modifier.matchParentSize(),
-                contentAlignment = Alignment.CenterEnd
+        //
+        // 🔴 `matchParentSize()` 必须挂在**外层 Box 的直接孩子**上。
+        // 它原先写在 AnimatedVisibility 的 content 里 —— 那一层不是 Box 的布局，
+        // 修饰符被**静默忽略**，整块于是缩成 78dp 宽、落到行的**左上角**；
+        // 而左上角任何时候都被卡片压着，所以「左滑之后右边空一块、编辑按钮根本看不到」。
+        // 修法是多包一层：先用 matchParentSize 钉满整行，再在内部 fillMaxSize + CenterEnd
+        // 把按钮推到右端。
+        Box(modifier = Modifier.matchParentSize()) {
+            AnimatedVisibility(
+                visible = !dragging,
+                modifier = Modifier.fillMaxSize(),
+                enter = fadeIn(tween(EXIT_MS)),
+                exit = fadeOut(tween(EXIT_MS))
             ) {
                 Box(
-                    modifier = Modifier
-                        .width(SWIPE_EDIT_WIDTH)
-                        .height(revealHeightDp)
-                        // 缩放要放在 clip / background 之前，否则缩的只是图标、底色不动
-                        .graphicsLayer {
-                            scaleX = revealScale
-                            scaleY = revealScale
-                        }
-                        .clip(SHAPE_CARD)
-                        .background(MaterialTheme.colorScheme.primary)
-                        .clickable(
-                            interactionSource = revealInteraction,
-                            indication = LocalIndication.current
-                        ) {
-                            currentOnClose()
-                            currentOnEdit()
-                        },
-                    contentAlignment = Alignment.Center
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.CenterEnd
                 ) {
-                    Icon(
-                        Icons.Default.Edit,
-                        contentDescription = "编辑便签",
-                        tint = MaterialTheme.colorScheme.onPrimary
-                    )
+                    Box(
+                        modifier = Modifier
+                            .width(SWIPE_EDIT_WIDTH)
+                            .height(revealHeightDp)
+                            // 缩放要放在 clip / background 之前，否则缩的只是图标、底色不动
+                            .graphicsLayer {
+                                scaleX = revealScale
+                                scaleY = revealScale
+                            }
+                            .clip(SHAPE_CARD)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .clickable(
+                                interactionSource = revealInteraction,
+                                indication = LocalIndication.current
+                            ) {
+                                currentOnClose()
+                                currentOnEdit()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "编辑便签",
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
                 }
             }
         }
@@ -2059,49 +2101,68 @@ private fun NoteRow(
                     scaleX = s
                     scaleY = s
                 }
-                // 单击 → 选中（高亮）；双击 → 进编辑。和课表的课程块同一套语义。
+                // 单击 → 选中 / 再点一次取消选中；双击 → 进编辑。和课表的课程块同一套语义。
                 //
-                // 必须用 detectTapGestures 而不是「clickable + 另一个 clickable」：
-                // 后者在双击时会先触发两次单击（高亮闪两下再进编辑），语义和手感都不对。
-                // detectTapGestures 自带双击判定窗口，onTap 会**等一个双击超时**后确认，
-                // 带来约 300ms 的反馈延迟 —— 这是双击语义的固有代价，无法两全。
+                // 🔴 **单击的反馈必须当场给，不能等双击判定窗口。**
+                // 原先用 `detectTapGestures(onTap, onDoubleTap)`：它的 onTap 要等一个
+                // 双击超时（约 300ms）确认「没有第二下」之后才回调 —— 于是
+                // **「被选中的便签再点一次」取消选中要愣一下才生效**，手感很木。
+                // 在 onPress 里补一次「点亮」只解决了「第一次点中」的即时性，
+                // 「取消选中」那条路仍然是慢的。
                 //
-                // 补偿办法和课表一致：把「第一次点下就高亮」放进 onPress，
-                // 手指按下的当帧就亮起来，不必等判定窗口关闭。
+                // 现在自己判双击：抬手当帧先把单击效果**做完**，若下一次抬手落在
+                // 系统双击超时之内，再**回退**这一次单击并进编辑。
+                // 顺序就是要求的「先按原效果完成单击反馈，再等待可能的双击」。
+                // 双击进编辑时中间会闪一下选中态 —— 这是该顺序的固有代价，换不掉的。
+                //
+                // 双击超时取 `viewConfiguration.doubleTapTimeoutMillis` 而不是写死 300：
+                // 各家 ROM 的值可能不同，用系统给的那个最稳。
                 //
                 // **位置很关键：这个 pointerInput 必须排在其他手势之前（更外层）。**
                 // 下面还有左滑 / 长按拖动两个 pointerInput，它们一按下就会各自
                 // awaitFirstDown 并抢占事件；把点击判定放在最外层，才能保证
                 // 「轻点」这条路径先被识别到。
                 .pointerInput("tap", note.id) {
-                    // 「这次按下之前是不是已经选中」——必须在 onPress 里**先**记下来。
-                    //
-                    // 不能等到 onTap 再看 selected：onPress 已经在按下当帧把它点亮了，
-                    // 等 300ms 后 onTap 执行时读到的必然是 true，于是「点第一下」也会
-                    // 被误判成「点第二下」而立刻取消选中 —— 表现出来就是点了完全没反应。
-                    // 所以这里用 pressedWhileSelected 保存按下瞬间的状态快照，
-                    // onTap 只依据这份快照决定「取消」还是「保持」。
-                    var wasSelectedAtPress = false
+                    // 双击超时取系统值，不写死 300 —— 各家 ROM 可能不同
+                    val doubleTapWindow = viewConfiguration.doubleTapTimeoutMillis
+                    // 这两个要在**多次手势之间**留存，所以声明在 detectTapGestures 外面
+                    var lastUpTime = 0L
+                    var lastWasSelected = false
+                    // ⚠️ 只给 onPress、**不给 onTap / onDoubleTap**。
+                    // 一旦传了 onDoubleTap，detectTapGestures 就会开双击判定窗口，
+                    // onTap 必须等窗口关闭才回调 —— 单击反馈又变回「愣一下才生效」。
+                    // 现在判定自己做：onPress 里等抬手，抬手当帧就把单击做完。
                     detectTapGestures(
-                        // 单击：按下前若已选中 → 这次点击是「再点一次」，取消选中。
-                        // 否则不动 —— onPress 已经把高亮点亮了，无需重复。
-                        onTap = {
-                            if (wasSelectedAtPress) currentOnDeselect()
-                        },
-                        onDoubleTap = { currentOnEdit() },
                         onPress = {
-                            // 在点亮**之前**读取，拿到的才是真正的「按下前状态」
-                            wasSelectedAtPress = currentSelected
-                            // 第一次点下就高亮：onTap 要等双击判定窗口关闭才回调，
-                            // 那段时间里卡片毫无反应，手感很木。
-                            // onSelect 必须幂等（上层已改成「只点亮、不 toggle」）。
+                            // 「按下前是不是已选中」在按下当帧取快照 ——
+                            // 等抬起后再读，状态已经被这一次点击自己改过了
+                            val wasSelected = currentSelected
+                            // 按下当帧先点亮：这是「手指还在屏幕上」的即时反馈
                             currentOnSelect()
-                            // 把按下转发给 interaction，按下缩小 / 悬停高亮保持原样。
-                            // 这里只做「转发」，不消费事件，双击仍能被识别
                             val press = PressInteraction.Press(it)
                             pressInteraction.emit(press)
-                            tryAwaitRelease()
-                            pressInteraction.emit(PressInteraction.Release(press))
+                            val released = tryAwaitRelease()
+                            pressInteraction.emit(
+                                if (released) PressInteraction.Release(press)
+                                else PressInteraction.Cancel(press)
+                            )
+                            // 划走了 / 被别的识别器抢走：不动选中态
+                            if (!released) return@detectTapGestures
+
+                            val now = SystemClock.uptimeMillis()
+                            if (now - lastUpTime <= doubleTapWindow) {
+                                // ── 双击 → 进编辑 ──
+                                // 先把上一次那一下单击**回退**：同一份 toggle 反着做一次，
+                                // 选中态就回到双击之前的样子，不在界面上留下痕迹。
+                                if (lastWasSelected) currentOnSelect() else currentOnDeselect()
+                                lastUpTime = 0L
+                                currentOnEdit()
+                            } else {
+                                // ── 单击 → 当场完成原有效果 ──
+                                if (wasSelected) currentOnDeselect() else currentOnSelect()
+                                lastUpTime = now
+                                lastWasSelected = wasSelected
+                            }
                         }
                     )
                 }
@@ -3220,6 +3281,29 @@ private const val EDGE_ALPHA_OTHER = 0.42f
 private val MAX_COLUMN_WIDTH = 76.dp
 
 /**
+ * 宽屏下改用这个更大的列宽上限。
+ *
+ * 🔴 76dp 只适合手机：七天 × 76 = 532dp，而平板双栏下留给网格的宽度有 1100dp+，
+ * 死守 76dp 会让整张表缩在左边、右边空出一大片，看着像没渲染完。
+ *
+ * 200dp 在常见平板（可用宽度 700~1200dp）上等于「不封顶」——
+ * 七列按可用宽度平分，表格铺满整栏；只有超宽屏（>1400dp）才真正咬得住。
+ *
+ * 后来实测发现 200dp 还不够：平板双栏下「只显示有课的 5 天」时，每列平分是 227dp，
+ * 被 200dp 一压就还剩 130dp 空在右边，表格看着仍然没铺满。
+ * 抬到 280dp 后，3~7 天的常见情形都能吃满可用宽度。
+ */
+private val MAX_COLUMN_WIDTH_WIDE = 280.dp
+
+/**
+ * 换用宽屏列宽上限的可用宽度门槛。
+ *
+ * 取 640dp：低于它时「按宽度平分」本来也到不了 76dp 以上，换成大上限没有任何视觉变化，
+ * 所以这个门槛附近不会出现「一过线表格突然变宽」的跳变。
+ */
+private val WIDE_COLUMN_CAP_FROM = 640.dp
+
+/**
  * 「窄屏」断点。窄于这个宽度时整套尺寸降一档（时间栏收窄、今天列少加宽、字号减小）。
  *
  * 取 360dp：这是最主流的手机竖屏可用宽度（360×640 的逻辑像素），
@@ -3313,20 +3397,25 @@ fun WeekGrid(
         val labelWidth = (maxWidth * 0.12f)
             .coerceIn(if (compact) 30.dp else 38.dp, 58.dp)
 
-        // 每列平分剩余宽度（不超过上限，免得大屏上被拉得太开）；
-        // 今天那一列再稍微加宽一点，保证内容不被截断，多出来的宽度从其它列均摊。
+        // 每列平分剩余宽度；今天那一列再稍微加宽一点，保证内容不被截断，
+        // 多出来的宽度从其它列均摊。
+        //
+        // 上限按可用宽度分档：窄屏守 76dp（再宽就是浪费），宽屏放到 200dp ——
+        // 否则平板双栏下七列只有 532dp，整张表缩在左边、右边空出一大片。
         val gridWidth = (maxWidth - labelWidth - 8.dp).coerceAtLeast(0.dp)
-        val normalWidth = (gridWidth / days.size).coerceAtMost(MAX_COLUMN_WIDTH)
+        val columnCap = if (gridWidth >= WIDE_COLUMN_CAP_FROM) MAX_COLUMN_WIDTH_WIDE
+        else MAX_COLUMN_WIDTH
+        val normalWidth = (gridWidth / days.size).coerceAtMost(columnCap)
         val todayIndex = days.indexOf(activeDay)
         val hasToday = todayIndex >= 0 && days.size > 1
         // 窄屏下今天列的加宽系数要收小：本来就窄，再按 1.35 放大，
         // 其余六列会被挤到 28dp 以下，全变成只有一个字的竖条
         val todayScale = if (compact) 1.15f else TODAY_COLUMN_SCALE
         val todayWidth = if (hasToday) {
-            (normalWidth * todayScale).coerceAtMost(MAX_COLUMN_WIDTH)
+            (normalWidth * todayScale).coerceAtMost(columnCap)
         } else normalWidth
         val otherWidth = if (hasToday) {
-            ((gridWidth - todayWidth) / (days.size - 1)).coerceAtMost(MAX_COLUMN_WIDTH)
+            ((gridWidth - todayWidth) / (days.size - 1)).coerceAtMost(columnCap)
         } else normalWidth
         // 逐列做宽度动画：每一列都从「它自己上一次的宽度」平滑过渡，
         // 所以点列头高亮、再点一次取消，两个方向都不会跳。

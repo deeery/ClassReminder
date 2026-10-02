@@ -93,6 +93,25 @@ object Prefs {
         else WeekSchedule.weekNumber(week1Monday, System.currentTimeMillis())
     }
 
+    private const val KEY_CALIBRATE_PROMPTED = "calibrate_prompted"
+
+    /**
+     * 是否已经因为「库里第一次出现课表数据」弹过校准提示。
+     *
+     * 只用来保证**只弹一次**：用户当时选了「稍后」也不该再弹 ——
+     * 他已经知道有这个功能了，之后想校准会自己去课表页点「校准周数」。
+     * 反复弹同一个提示是打扰，不是帮忙。
+     */
+    fun isCalibratePrompted(ctx: Context): Boolean {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        return sp.getBoolean(KEY_CALIBRATE_PROMPTED, false)
+    }
+
+    fun setCalibratePrompted(ctx: Context) {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        sp.edit().putBoolean(KEY_CALIBRATE_PROMPTED, true).apply()
+    }
+
     // ── 界面状态（下次打开时接着上次看） ──────────────────────────────
 
     private const val KEY_LAST_TAB = "last_tab"
