@@ -32,6 +32,12 @@ class SyncPrefsImpl(context: Context) : SyncPrefs {
             runCatching { sp.edit().putInt(KEY_CURSOR, value).commit() }
         }
 
+    override var syncedAccountId: Int
+        get() = sp.getInt(KEY_ACCOUNT_ID, 0)
+        set(value) {
+            runCatching { sp.edit().putInt(KEY_ACCOUNT_ID, value).commit() }
+        }
+
     private companion object {
         /**
          * 文件名带 `_sync` 后缀，避免和 `Prefs` / `AccountSession` 的
@@ -39,5 +45,11 @@ class SyncPrefsImpl(context: Context) : SyncPrefs {
          */
         const val FILE_NAME = "stumate_sync"
         const val KEY_CURSOR = "cursor"
+
+        /**
+         * 本地数据归属的账号 id。和游标放同一个文件、同生共死：
+         * 单独存会出现「游标是新的、账号还是旧的」这种自相矛盾的状态。
+         */
+        const val KEY_ACCOUNT_ID = "accountId"
     }
 }
