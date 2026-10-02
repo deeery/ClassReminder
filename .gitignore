@@ -37,3 +37,11 @@ build/
 local.properties
 .idea/
 *.iml
+
+### 发布签名 —— 绝不入库 ###
+# 密钥和口令一旦进了 git 历史就等于公开，且换密钥必须让所有已安装的用户卸载重装。
+# 备份提醒：stumate-release.jks 和 keystore.properties 要一起存到安全的地方，
+# 丢了就再也无法给已安装的应用发更新。
+keystore.properties
+*.jks
+*.keystore
