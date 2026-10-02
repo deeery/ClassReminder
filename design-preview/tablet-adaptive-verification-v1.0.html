@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>StuMate 安卓端 · 平板响应式适配 验收页 v1.0</title>
+<style>
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:32px 28px 56px;
+    font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+    background:#0f0f10; color:#e8e8e8;
+  }
+  h1{font-size:24px;font-weight:600;margin:0 0 6px}
+  .lead{font-size:13px;line-height:20px;color:#a0a0a0;margin:0 0 26px;max-width:1040px}
+  h2.sec{font-size:15px;font-weight:600;margin:34px 0 12px;padding-bottom:8px;border-bottom:1px solid #2e2e2e}
+  table{border-collapse:collapse;width:100%;font-size:13px;margin:0 0 8px}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid #2a2a2a;vertical-align:top}
+  th{font-weight:600;color:#c5c5c5;background:#1a1a1a}
+  code{font-family:"Cascadia Mono",Consolas,monospace;font-size:12px;background:#242424;padding:1px 5px;border-radius:3px}
+  pre{font-family:"Cascadia Mono",Consolas,monospace;font-size:12px;line-height:18px;
+      background:#1a1a1a;border:1px solid #2e2e2e;border-radius:6px;padding:12px 14px;overflow-x:auto;color:#d0d0d0}
+  .ok{color:#6CCB5F;font-weight:600}
+  .bad{color:#FF99A4;font-weight:600}
+  .warn{color:#e0b341;font-weight:600}
+  .note{margin:12px 0 0;font-size:12px;line-height:18px;color:#a0a0a0;border-left:2px solid #404040;padding-left:10px}
+  figure{margin:0;border-radius:8px;border:1px solid #2e2e2e;overflow:hidden;background:#1a1a1a}
+  figure img{display:block;width:100%;height:auto}
+  figcaption{padding:10px 14px 12px;font-size:12px;line-height:17px;color:#a0a0a0}
+  figcaption b{color:#e8e8e8;font-weight:600}
+  ul{font-size:13px;line-height:21px;padding-left:20px;margin:6px 0}
+  .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+</style>
+</head>
+<body>
+
+<h1>安卓端 · 平板响应式适配 · 验收页 v1.0</h1>
+<p class="lead">
+  起因：评估「桌面端那套方案能否快速迁到平板端」。结论是<b>不能迁移、但能快速适配</b> ——
+  因为两端本来就是**平行实现**，安卓端已有等价的全部业务逻辑（<code>data</code> 1787 行 /
+  <code>sync</code> 1700 行，与桌面端 2033 / 1865 行一一对应）。
+  真正缺的只有一层<b>响应式壳</b>。
+  <br>本页是那层壳的实机验收。
+</p>
+
+<h2 class="sec">一、改了什么（三档断点）</h2>
+<table>
+  <tr><th>宽度</th><th>形态</th><th>对应设备</th></tr>
+  <tr>
+    <td><code>&lt; 600dp</code></td>
+    <td>单栏 + <b>底部导航栏</b>（原样不动）</td>
+    <td>手机竖屏 411dp</td>
+  </tr>
+  <tr>
+    <td><code>600 – 899dp</code></td>
+    <td>左侧导航栏 + 单栏内容</td>
+    <td>平板竖屏 800dp、手机横屏</td>
+  </tr>
+  <tr>
+    <td><code>900 – 1199dp</code></td>
+    <td>侧栏 + <b>便签页开双栏</b>（列表 + 详情）</td>
+    <td>平板横屏 1280dp 以下</td>
+  </tr>
+  <tr>
+    <td><code>&ge; 1200dp</code></td>
+    <td>侧栏 + <b>便签与课表都开双栏</b></td>
+    <td>平板横屏 1280dp</td>
+  </tr>
+</table>
+<p class="note">
+  <b>为什么课表的断点比便签高？</b>课表是七列：双栏要额外切掉侧栏 80dp + 详情栏 320dp，
+  剩下的再除以 7 才是单格宽度。900dp 时只剩 71dp/格，课程名被截成一两个字；
+  1200dp 时有 114dp/格，与手机竖屏单格相当。<b>两个断点不一样是刻意的，不是漏改。</b>
+</p>
+<p class="note">
+  判定用的是 <code>LocalConfiguration.screenWidthDp</code>，不是 <code>BoxWithConstraints</code> ——
+  后者是 SubcomposeLayout，包住整个主界面等于每次尺寸变化都要重排整棵树；
+  而这里只想知道窗口多宽，Configuration 直接就给。多窗口 / 分屏下它反映的正是<b>本应用窗口</b>的宽度。
+</p>
+
+<h2 class="sec">二、实机验收：手机竖屏（回归，必须与改动前一致）</h2>
+<div class="pair">
+  <figure>
+    <img src="phone-今天.png" alt="手机竖屏 今天页">
+    <figcaption><b>411dp</b> —— 底栏四 Tab + 「提醒服务未启动」状态行，<span class="ok">侧栏未出现</span></figcaption>
+  </figure>
+  <figure>
+    <img src="phone-课表.png" alt="手机竖屏 课表页">
+    <figcaption><b>411dp</b> —— 课表仍占满全宽</figcaption>
+  </figure>
+</div>
+<p class="note">
+  这组图是本次改动「零回归」的证据：窄屏时那层 Row <b>只有一个孩子</b>，
+  不是靠调参对齐，而是根本不参与布局。
+</p>
+
+<h2 class="sec">三、实机验收：平板竖屏 800dp（侧栏，不开双栏）</h2>
+<div class="pair">
+  <figure>
+    <img src="tablet-portrait-今天.png" alt="平板竖屏 今天页">
+    <figcaption><b>800dp</b> —— 侧栏取代底栏；顶栏标题让开侧栏，与内容左边缘对齐</figcaption>
+  </figure>
+  <figure>
+    <img src="tablet-portrait-便签.png" alt="平板竖屏 便签页">
+    <figcaption><b>800dp</b> —— 便签<b>仍是单栏</b>（900dp 才开双栏，这里放不下列表 + 详情）</figcaption>
+  </figure>
+</div>
+
+<h2 class="sec">四、实机验收：平板横屏 1280dp（双栏）</h2>
+<div class="pair">
+  <figure>
+    <img src="tablet-landscape-便签-selected.png" alt="平板横屏 便签双栏">
+    <figcaption>
+      <b>便签双栏</b> —— 左列表 360dp + 右详情。<br>
+      详情是「<b>只读面板 + 编辑按钮</b>」：编辑表单有五块，塞进 460dp 会挤成一条，
+      不如复用已经调好的对话框。双栏解决的是「看一眼写了什么不用开关弹窗」。
+    </figcaption>
+  </figure>
+  <figure>
+    <img src="tablet-landscape-课表-selected.png" alt="平板横屏 课表双栏">
+    <figcaption>
+      <b>课表双栏</b> —— 七列时间轴 + 右详情 320dp。<br>
+      选中一节课时<b>网格不再上下跳</b>（单栏时详情条从底部浮出会把网格顶起来），
+      这是双栏相对单栏最实在的好处。
+    </figcaption>
+  </figure>
+</div>
+<div class="pair" style="margin-top:20px">
+  <figure>
+    <img src="tablet-landscape-课表.png" alt="平板横屏 课表页（未选中）">
+    <figcaption>未选中时右栏是空态：「点左侧任意一节课查看详情」—— 说清怎么才能有内容，而不是一块空白</figcaption>
+  </figure>
+  <figure>
+    <img src="tablet-landscape-设置.png" alt="平板横屏 设置页">
+    <figcaption>设置页在宽屏下不需要特殊处理，跟着侧栏走即可</figcaption>
+  </figure>
+</div>
+
+<h2 class="sec">五、怎么验的</h2>
+<p style="font-size:13px;line-height:21px;margin:0 0 10px">
+  没有新建平板 AVD —— 唯一的系统镜像已装在手机 AVD 上，而 AVD 目录 <b>6.6 GB</b>，
+  只为改两行 LCD 配置复制一份太重。改用 <code>wm size</code> / <code>wm density</code>
+  改**逻辑**尺寸与密度：应用读到的 <code>screenWidthDp</code> 就是我们要验的那个值，
+  对「断点有没有生效」这个目的完全等价。
+</p>
+<pre># 统一 density=160 → 1px = 1dp，尺寸直接就是 dp，不用心算
+adb shell wm size 800x1280;  adb shell wm density 160   # 平板竖屏
+adb shell wm size 1280x800;  adb shell wm density 160   # 平板横屏
+adb shell wm size reset;     adb shell wm density reset # 收尾复位
+
+# 新增 tools/shoot_tablet.py：三形态 × 四页面共 14 张，自动切形态 / 点 Tab / 截图</pre>
+<p class="note">
+  <b>截图脚本里两个「假阴性」防线</b>（都是这次真踩到的）：
+  <br>① 导航项<b>不能只按 <code>content-desc</code> 找</b> —— <code>NavigationBarItem</code> /
+  <code>NavigationRailItem</code> 会把子节点语义合并上来，图标上的 <code>contentDescription</code>
+  被 label 的 text 覆盖，按 desc 一个都找不到。必须 text / desc 都看。
+  <br>② 按文字点课程块时要<b>排除时间轴刻度</b>（<code>06:00</code> / <code>09:00</code>…）——
+  它们是网格里最靠左最靠上的文字节点，按「第一个非骨架文字」去点必然先撞上，
+  而刻度不可点，于是又变成「点了没反应」。
+  <br>③ 收尾断言<b>同形态下各图字节数必须互不相同</b>，相同就是根本没变过。
+</p>
+
+<h2 class="sec">六、过程中修掉的两个问题</h2>
+<table>
+  <tr><th>#</th><th>症状</th><th>根因 / 修法</th></tr>
+  <tr>
+    <td>1</td>
+    <td class="bad">右半屏一片空白，状态点跑到屏幕正中</td>
+    <td>
+      侧栏外层 <code>Column</code> 没约束宽度，而底部状态脚注用了 <code>fillMaxWidth()</code> ——
+      Column 宽度取「最宽的孩子」，于是被撑到整屏宽，同级的 1dp 分隔线被推出屏幕、
+      内容区（<code>weight(1f)</code>）被挤成 0 宽。<br>
+      <b>修法</b>：显式给侧栏 <code>width(NAV_RAIL_WIDTH)</code>（80dp，与 M3 的
+      <code>NavigationRail</code> 固定宽度一致）。
+    </td>
+  </tr>
+  <tr>
+    <td>2</td>
+    <td>宽屏下顶栏标题停在最左边，和下方内容左边缘对不齐</td>
+    <td>
+      顶栏横跨整屏（含侧栏上方）。<br>
+      <b>修法</b>：宽屏时给顶栏内容加 <code>start = NAV_RAIL_WIDTH</code> 的内边距。
+      <b>背景不跟着让</b> —— padding 加在 <code>.background()</code> 之后，
+      否则侧栏上方会缺一块、出现色块断层。
+    </td>
+  </tr>
+</table>
+<p class="note">
+  另外顺手补了一个<b>既有的漏传</b>：<code>MainScreen</code> 调 <code>WeekView</code> 时
+  没传 <code>experimentalGrid</code>，于是设置页那个「实验性：时间轴网格课表」开关
+  <b>要重启才生效</b>。加一个实参即可。
+</p>
+
+<h2 class="sec">七、验证结果</h2>
+<pre>compileDebugKotlin   BUILD SUCCESSFUL
+testDebugUnitTest    <span class="ok">153 / 153 通过</span>，0 失败 0 跳过
+assembleDebug        BUILD SUCCESSFUL
+实机三形态 × 四页面  14 张截图，同形态内字节数互不相同  <span class="ok">全部 OK</span></pre>
+
+<h2 class="sec">八、已知限制 / 下一步</h2>
+<ul>
+  <li><b>设置页没有做双栏</b>。它现在是「子导航 + 面板」的单列结构，
+    宽屏下只是被拉宽 —— 能用，但不是最优。要不要拆双栏建议先看实际使用感受。</li>
+  <li><b>今天页没有做双栏</b>。今天页是「一屏概览」，拆成两栏反而丢掉了「一眼看全」的价值。</li>
+  <li>横竖屏切换时会重建 Activity，当前 Tab 会保留（走 <code>Prefs.getLastTab</code>），
+    但滚动位置不保留。要不要保，取决于实际手感。</li>
+  <li>折叠屏 / 多窗口：走的是同一套 <code>screenWidthDp</code> 判定，理论上自动生效，
+    但没有实机验证过。</li>
+</ul>
+
+</body>
+</html>

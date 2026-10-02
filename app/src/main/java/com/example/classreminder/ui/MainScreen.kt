@@ -92,6 +92,7 @@ import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -581,6 +582,40 @@ private fun rememberPressScale(
     ).value
 }
 
+// ── 响应式断点（平板 / 手机横屏）────────────────────────────────
+
+/**
+ * 导航形态断点：`>= 600dp` 时底栏换成左侧导航栏。
+ *
+ * 600 不是我拍的 —— 它就是 Android 自己的 `sw600dp` 约定（平板资源限定符用的那个数），
+ * 也是 Material 3 里「compact / medium」的分界。和桌面端 `AppShell.kt` 的断点思路一致。
+ *
+ * 为什么是**导航**先换而不是先开双栏：600dp 上一列 rail(80) + 双栏内容根本放不下，
+ * 但只把底栏换成 rail 就已经明显更像平板了，而且改动面最小、回归风险最低。
+ */
+private val NAV_RAIL_BREAKPOINT = 600.dp
+
+/**
+ * 双栏断点：`>= 900dp` 时便签页与课表页开右侧面板。
+ *
+ * 900 = rail(80) + 列表(360) + 详情面板(460)，是「三块都还读得下去」的下限。
+ * 窄于这个宽度强行双栏，主列表会被压成一条缝，还不如单栏。
+ */
+private val TWO_PANE_BREAKPOINT = 900.dp
+
+/**
+ * 课表页开双栏的断点，比便签页更高。
+ *
+ * 因为课表是**七列**：宽屏双栏要额外切掉 rail(80) + 详情栏(320)，
+ * 剩给网格的宽度再除以 7 才是单格宽度。
+ *  - 900dp：900 - 80 - 320 = 500 → 每格 71dp，课程名会被截成一两个字，不能接受
+ *  - 1200dp：1200 - 80 - 320 = 800 → 每格 114dp，和手机竖屏单格宽度相当，可用
+ *
+ * 便签页没有这个约束（列表 + 面板两块就够了），所以它 900dp 就能开。
+ * **两个断点不一样是刻意的，不是漏改。**
+ */
+private val WEEK_TWO_PANE_BREAKPOINT = 1200.dp
+
 /**
  * 高亮交互统一走 [clickable] + `MutableInteractionSource`（见 [HighlightSpec]）：
  * 同一个 source 同时喂「悬停」和「按下」，两档反馈来自同一处状态，
@@ -601,6 +636,15 @@ fun MainScreen(
     onImportTimetable: () -> Unit
 ) {
     val ctx = LocalContext.current
+    // ── 宽度断点 ──
+    // 用 `LocalConfiguration.screenWidthDp` 而不是 `BoxWithConstraints`：
+    // 后者是 SubcomposeLayout，包住整个主界面等于每次尺寸变化都要重排整棵树；
+    // 而这里只想知道「窗口有多宽」，Configuration 直接就给了，零成本。
+    // 多窗口 / 分屏下 screenWidthDp 反映的是**本应用窗口**的宽度，正是我们要的。
+    val screenWidth = LocalConfiguration.current.screenWidthDp.dp
+    val wide = screenWidth >= NAV_RAIL_BREAKPOINT
+    val twoPane = screenWidth >= TWO_PANE_BREAKPOINT
+    val weekTwoPane = screenWidth >= WEEK_TWO_PANE_BREAKPOINT
     val classes by viewModel.classes.collectAsState(initial = emptyList())
     val notes by viewModel.notes.collectAsState(initial = emptyList())
     val canUndo by viewModel.canUndo.collectAsState()
@@ -663,6 +707,42 @@ fun MainScreen(
     // 切页或改搜索词时清掉选中，免得左下角操作区对着一条已经看不见的便签
     LaunchedEffect(selectedTab, searchQuery) { selectedNoteId = null }
 
+    // ── 课表详情面板要用的两个派生值 ──
+    // 网格里的「选中」是 id，右栏要的是整条课程；高亮规则与 WeekGrid 保持一致：
+    // 只有正在看本周时今天的课才高亮。
+    val selectedClass = remember(selectedClassId, classes) {
+        selectedClassId?.let { id -> classes.firstOrNull { it.id == id } }
+    }
+    val weekHighlightDay = if (currentWeek != null && shownWeek == currentWeek) todayName() else null
+
+    // 切页的副作用集中在这里 —— 底栏（窄屏）和左侧导航栏（宽屏）共用同一份。
+    // 抽出来是为了避免「从底栏切过去清选中、从侧栏切过去不清」这种不对称 ——
+    // 那种 bug 只在某一种屏幕形态下出现，最难发现。
+    val selectTab: (Int) -> Unit = { tab ->
+        selectedTab = tab
+        // 离开任何页都把展开的添加菜单收起来（今天 / 课表页都有这个菜单了），
+        // 免得切回来还敞着
+        fabExpanded = false
+        // 离开课表页也清掉网格选中：详情条和 FAB 的上移都跟着它，
+        // 留着会让下次回到课表页时看到一个「凭空的」选中态
+        if (tab != 1) selectedClassId = null
+        // 只记非设置页（守卫在 Prefs 里）
+        Prefs.setLastTab(ctx, tab)
+    }
+
+    // 便签页的三个回调。单栏 / 双栏两条路径**共用同一份** ——
+    // 否则「平板上删完不清选中」这类只在宽屏出现的 bug 迟早会冒出来，而且很难发现。
+    //
+    // onSelect 必须是**幂等**的：只负责点亮，不取消选中。
+    // 因为 onPress 和 onTap 都会调它，若它带 toggle 语义，
+    // 一次单击里 press 选中、tap 又取消，等于白点（这是修复前的 bug）。
+    val onNoteSelect: (NoteEntity) -> Unit = { picked -> selectedNoteId = picked.id }
+    val onNoteDeselect: () -> Unit = { selectedNoteId = null }
+    val onNoteDelete: (NoteEntity) -> Unit = { note ->
+        viewModel.deleteNote(note.id)
+        if (selectedNoteId == note.id) selectedNoteId = null
+    }
+
     Scaffold(
         topBar = {
             // 顶栏在「今天」和「便签」两页存在。这里**故意不给它做高度动画** ——
@@ -689,7 +769,15 @@ fun MainScreen(
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.surface)
                         .statusBarsPadding()
-                        .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 16.dp)
+                        // 宽屏时把标题让到侧栏右边，和下面的内容左边缘对齐。
+                        // **背景不跟着让**（.background 在上面、padding 在下面）——
+                        // 否则侧栏上方会缺一块，出现一条色块断层
+                        .padding(
+                            start = 20.dp + if (wide) NAV_RAIL_WIDTH else 0.dp,
+                            end = 20.dp,
+                            top = 14.dp,
+                            bottom = 16.dp
+                        )
                 ) {
                     Text(
                         text = greetingFor(clockNow),
@@ -707,6 +795,10 @@ fun MainScreen(
                 }
             } else if (selectedTab == 2) {
                 TopAppBar(
+                    // 与「今天」页同一条规则：宽屏时让开侧栏，标题与内容左边缘对齐。
+                    // 这里 padding 加在容器外（TopAppBar 没有内边距参数），
+                    // 让出来的那块露出的是 Scaffold 的 surface 底，和顶栏同色，看不出接缝
+                    modifier = Modifier.padding(start = if (wide) NAV_RAIL_WIDTH else 0.dp),
                     title = {
                         // 标题 ↔ 搜索框：淡入淡出 + 从左侧轻微放大，锚点放在左端
                         AnimatedContent(
@@ -783,22 +875,17 @@ fun MainScreen(
             }
         },
         bottomBar = {
-            BottomNavigationBar(
-                selectedTab = selectedTab,
-                isRunning = serviceRunning,
-                currentWeek = currentWeek,
-                onTabSelected = { tab ->
-                    selectedTab = tab
-                    // 离开任何页都把展开的添加菜单收起来（今天 / 课表页都有这个菜单了），
-                    // 免得切回来还敞着
-                    fabExpanded = false
-                    // 离开课表页也清掉网格选中：详情条和 FAB 的上移都跟着它，
-                    // 留着会让下次回到课表页时看到一个「凭空的」选中态
-                    if (tab != 1) selectedClassId = null
-                    // 只记非设置页（守卫在 Prefs 里）
-                    Prefs.setLastTab(ctx, tab)
-                }
-            )
+            // 宽屏走左侧导航栏（在下面的 Row 里），底栏让位。
+            // 两者同时出现就是两套导航指着同一件事，纯属浪费纵向空间 ——
+            // 平板上纵向空间恰恰是最紧的（顶栏 + 底栏 + 系统栏吃掉一截）。
+            if (!wide) {
+                BottomNavigationBar(
+                    selectedTab = selectedTab,
+                    isRunning = serviceRunning,
+                    currentWeek = currentWeek,
+                    onTabSelected = selectTab
+                )
+            }
         },
         floatingActionButton = {
             // 设置页没有悬浮按钮。切 Tab 时它瞬时出现 / 消失，不做缩放淡入 ——
@@ -811,7 +898,10 @@ fun MainScreen(
                 // 用 animateDpAsState 而不是硬切：详情条本身是展开动画进来的，
                 // FAB 跟着一起平移，两者看起来是同一件事的两个部分。
                 val detailLift by animateDpAsState(
-                    targetValue = if (selectedTab == 1 && selectedClassId != null) DETAIL_BAR_LIFT else 0.dp,
+                    // 双栏时不抬：详情卡在右栏，网格下方没有东西要避让
+                    targetValue = if (selectedTab == 1 && selectedClassId != null && !weekTwoPane) {
+                        DETAIL_BAR_LIFT
+                    } else 0.dp,
                     animationSpec = tween(ENTER_MS),
                     label = "fabDetailLift"
                 )
@@ -910,108 +1000,193 @@ fun MainScreen(
             }
         }
     ) { padding ->
-        // 用 Box 而不是 Column：左下角操作区要浮在内容之上，得靠 align 定位
-        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
-            // 四个页面之间**瞬时切换**，不做过渡动画：
-            // 切页本身就要组合出新的一屏（课表那屏很重），再叠加过渡只会让这一帧更挤。
-            when (selectedTab) {
-                0 -> TodayScreen(
-                    classes = classes,
-                    notes = notes,
+        // 宽屏：左侧导航栏 + 右侧内容。
+        // **窄屏时这层 Row 只有一个孩子**，布局结果与改动前逐像素相同 ——
+        // 这是「手机端零回归」能成立的关键：不是靠调参对齐，而是根本不参与布局。
+        //
+        // ⚠️ Scaffold 的 padding 从里层的 Box 挪到了这层 Row 上。
+        // 因为侧栏是 Box 的**兄弟**，padding 只加在 Box 上的话，
+        // 侧栏会一直顶到系统状态栏 / 导航栏底下（它拿不到那些内边距）。
+        Row(modifier = Modifier.fillMaxSize().padding(padding)) {
+            if (wide) {
+                AppNavigationRail(
+                    selectedTab = selectedTab,
+                    isRunning = serviceRunning,
                     currentWeek = currentWeek,
-                    // 「当前空闲」的判定要用设置里那个提前提醒窗口 ——
-                    // 它就是「离上课还有多久该开始提示我」的阈值，语义完全对得上。
-                    // 每次回到这一页都重读一次，改了设置立刻生效，不用重启。
-                    advanceMinutes = Prefs.getAdvanceMinutes(ctx),
-                    onOpenClass = { editing = it },
-                    onOpenNotes = {
-                        selectedTab = 2
-                        Prefs.setLastTab(ctx, 2)
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-                1 -> WeekView(
-                    classes = classes,
-                    currentWeek = currentWeek,
-                    week1Monday = week1Monday,
-                    mode = weekMode,
-                    onModeChange = {
-                        weekMode = it
-                        Prefs.setWeekGrid(ctx, it == WeekMode.GRID)
-                        // 切到列表模式时清掉网格的选中：列表有自己的选中逻辑，
-                        // 而 FAB 的上移只看网格选中，留着会让 FAB 莫名抬在半空
-                        if (it != WeekMode.GRID) selectedClassId = null
-                    },
-                    shownWeek = shownWeek,
-                    onShownWeekChange = { shownWeek = it },
-                    onCalibrate = { showCalibrate = true },
-                    onEdit = { editing = it },
-                    selectedClassId = selectedClassId,
-                    onSelectClassId = { selectedClassId = it }
-                )
-                2 -> NoteListView(
-                    notes = filteredNotes,
-                    searching = searchQuery.isNotBlank(),
-                    selectedId = selectedNote?.id,
-                    // 「按下就亮」用这个：**幂等**，只负责点亮，不会取消选中。
-                    // 因为 onPress 和 onTap 都会调它，若它带 toggle 语义，
-                    // 一次单击里 press 选中、tap 又取消，等于白点（这是修复前的 bug）。
-                    onSelect = { picked -> selectedNoteId = picked.id },
-                    onDeselect = { selectedNoteId = null },
-                    onEdit = { editingNote = it },
-                    onDelete = { note ->
-                        viewModel.deleteNote(note.id)
-                        if (selectedNoteId == note.id) selectedNoteId = null
-                    },
-                    onMove = { from, to -> viewModel.moveNote(from, to) },
-                    onAdd = { addingNote = true }
-                )
-                else -> SettingsPage(
-                    viewModel = viewModel,
-                    accountSession = accountSession,
-                    syncEngine = syncEngine,
-                    onSignInChanged = onSignInChanged,
-                    sections = settingsSections,
-                    themeMode = themeMode,
-                    onThemeModeChanged = onThemeModeChanged,
-                    onRequestNotificationPermission = onRequestNotificationPermission,
-                    onOpenSettings = onOpenSettings,
-                    onImportTimetable = onImportTimetable
+                    onTabSelected = selectTab
                 )
             }
-
-            // 选中便签时，左下角浮出「编辑 / 删除」，尺寸和右下角的按钮一致。
-            // 用 AnimatedContent 以「选中的那条便签」为目标：退场动画期间它仍拿得到那一条，不会读到 null
-            AnimatedContent(
-                targetState = if (selectedTab == 2) selectedNote else null,
+            // 用 Box 而不是 Column：左下角操作区要浮在内容之上，得靠 align 定位
+            Box(
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 16.dp, bottom = 16.dp),
-                transitionSpec = {
-                    (fadeIn(tween(ENTER_MS)) +
-                        scaleIn(tween(ENTER_MS), initialScale = 0.8f, transformOrigin = TransformOrigin(0f, 1f)) +
-                        slideInVertically(tween(ENTER_MS)) { it / 5 }) togetherWith
-                        (fadeOut(tween(EXIT_MS)) +
-                            scaleOut(tween(EXIT_MS), targetScale = 0.8f, transformOrigin = TransformOrigin(0f, 1f)) +
-                            slideOutVertically(tween(EXIT_MS)) { it / 5 })
-                },
-                contentAlignment = Alignment.BottomStart,
-                label = "noteActions"
-            ) { note ->
-                if (note != null) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        NoteActionButton(
-                            icon = Icons.Default.Edit,
-                            contentDescription = "编辑便签",
-                            tint = MaterialTheme.colorScheme.primary
-                        ) { editingNote = note }
-                        NoteActionButton(
-                            icon = Icons.Default.Delete,
-                            contentDescription = "删除便签",
-                            tint = MaterialTheme.colorScheme.error
-                        ) {
-                            viewModel.deleteNote(note.id)
-                            selectedNoteId = null
+                    // weight 而不是固定宽度：导航栏宽度由它自己决定，内容区自动吃剩下的
+                    .weight(1f)
+                    .fillMaxSize()
+            ) {
+                // 四个页面之间**瞬时切换**，不做过渡动画：
+                // 切页本身就要组合出新的一屏（课表那屏很重），再叠加过渡只会让这一帧更挤。
+                when (selectedTab) {
+                    0 -> TodayScreen(
+                        classes = classes,
+                        notes = notes,
+                        currentWeek = currentWeek,
+                        // 「当前空闲」的判定要用设置里那个提前提醒窗口 ——
+                        // 它就是「离上课还有多久该开始提示我」的阈值，语义完全对得上。
+                        // 每次回到这一页都重读一次，改了设置立刻生效，不用重启。
+                        advanceMinutes = Prefs.getAdvanceMinutes(ctx),
+                        onOpenClass = { editing = it },
+                        onOpenNotes = {
+                            selectedTab = 2
+                            Prefs.setLastTab(ctx, 2)
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    1 -> if (weekTwoPane) {
+                        // 超宽屏（>= 1200dp）：七列网格 + 右侧常驻详情。
+                        // 详情不再浮在网格下方，所以选中一节课时网格不会整体上下跳 ——
+                        // 这是双栏相对单栏最实在的好处。
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            WeekView(
+                                classes = classes,
+                                currentWeek = currentWeek,
+                                week1Monday = week1Monday,
+                                mode = weekMode,
+                                onModeChange = {
+                                    weekMode = it
+                                    Prefs.setWeekGrid(ctx, it == WeekMode.GRID)
+                                    if (it != WeekMode.GRID) selectedClassId = null
+                                },
+                                shownWeek = shownWeek,
+                                onShownWeekChange = { shownWeek = it },
+                                onCalibrate = { showCalibrate = true },
+                                onEdit = { editing = it },
+                                selectedClassId = selectedClassId,
+                                onSelectClassId = { selectedClassId = it },
+                                // ⚠️ 原来这里**漏传了** experimentalGrid，于是 WeekView
+                                // 一直用默认值 true，设置页那个开关要重启才生效。
+                                // 顺手补上（见本次提交说明）。
+                                experimentalGrid = experimentalGrid,
+                                showInlineDetail = false,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .fillMaxHeight()
+                                    .background(MaterialTheme.colorScheme.outlineVariant)
+                            )
+                            WeekDetailPane(
+                                cls = selectedClass,
+                                highlightDay = weekHighlightDay,
+                                onEdit = { editing = it },
+                                onDismiss = { selectedClassId = null },
+                                modifier = Modifier
+                                    .width(WEEK_DETAIL_PANE_WIDTH)
+                                    .fillMaxHeight()
+                            )
+                        }
+                    } else {
+                        WeekView(
+                            classes = classes,
+                            currentWeek = currentWeek,
+                            week1Monday = week1Monday,
+                            mode = weekMode,
+                            onModeChange = {
+                                weekMode = it
+                                Prefs.setWeekGrid(ctx, it == WeekMode.GRID)
+                                // 切到列表模式时清掉网格的选中：列表有自己的选中逻辑，
+                                // 而 FAB 的上移只看网格选中，留着会让 FAB 莫名抬在半空
+                                if (it != WeekMode.GRID) selectedClassId = null
+                            },
+                            shownWeek = shownWeek,
+                            onShownWeekChange = { shownWeek = it },
+                            onCalibrate = { showCalibrate = true },
+                            onEdit = { editing = it },
+                            selectedClassId = selectedClassId,
+                            onSelectClassId = { selectedClassId = it },
+                            experimentalGrid = experimentalGrid
+                        )
+                    }
+                2 -> if (twoPane) {
+                    // 宽屏：列表常驻左栏，选中的那条在右栏展开 ——
+                    // 不用再开弹窗就能读完一条便签
+                    NoteTwoPane(
+                        notes = filteredNotes,
+                        searching = searchQuery.isNotBlank(),
+                        selected = selectedNote,
+                        selectedId = selectedNote?.id,
+                        onSelect = onNoteSelect,
+                        onDeselect = onNoteDeselect,
+                        onEdit = { editingNote = it },
+                        onDelete = onNoteDelete,
+                        onMove = { from, to -> viewModel.moveNote(from, to) },
+                        onAdd = { addingNote = true }
+                    )
+                } else {
+                    NoteListView(
+                        notes = filteredNotes,
+                        searching = searchQuery.isNotBlank(),
+                        selectedId = selectedNote?.id,
+                        onSelect = onNoteSelect,
+                        onDeselect = onNoteDeselect,
+                        onEdit = { editingNote = it },
+                        onDelete = onNoteDelete,
+                        onMove = { from, to -> viewModel.moveNote(from, to) },
+                        onAdd = { addingNote = true }
+                    )
+                }
+                    else -> SettingsPage(
+                        viewModel = viewModel,
+                        accountSession = accountSession,
+                        syncEngine = syncEngine,
+                        onSignInChanged = onSignInChanged,
+                        sections = settingsSections,
+                        themeMode = themeMode,
+                        onThemeModeChanged = onThemeModeChanged,
+                        onRequestNotificationPermission = onRequestNotificationPermission,
+                        onOpenSettings = onOpenSettings,
+                        onImportTimetable = onImportTimetable
+                    )
+                }
+
+                // 选中便签时，左下角浮出「编辑 / 删除」，尺寸和右下角的按钮一致。
+                // 用 AnimatedContent 以「选中的那条便签」为目标：退场动画期间它仍拿得到那一条，不会读到 null
+                //
+                // 双栏时**不显示**：这两个动作已经在右栏详情面板的底部了，
+                // 再浮一组就是同一件事说两遍，还会挡住列表最后一条
+                AnimatedContent(
+                    targetState = if (selectedTab == 2 && !twoPane) selectedNote else null,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 16.dp, bottom = 16.dp),
+                    transitionSpec = {
+                        (fadeIn(tween(ENTER_MS)) +
+                            scaleIn(tween(ENTER_MS), initialScale = 0.8f, transformOrigin = TransformOrigin(0f, 1f)) +
+                            slideInVertically(tween(ENTER_MS)) { it / 5 }) togetherWith
+                            (fadeOut(tween(EXIT_MS)) +
+                                scaleOut(tween(EXIT_MS), targetScale = 0.8f, transformOrigin = TransformOrigin(0f, 1f)) +
+                                slideOutVertically(tween(EXIT_MS)) { it / 5 })
+                    },
+                    contentAlignment = Alignment.BottomStart,
+                    label = "noteActions"
+                ) { note ->
+                    if (note != null) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            NoteActionButton(
+                                icon = Icons.Default.Edit,
+                                contentDescription = "编辑便签",
+                                tint = MaterialTheme.colorScheme.primary
+                            ) { editingNote = note }
+                            NoteActionButton(
+                                icon = Icons.Default.Delete,
+                                contentDescription = "删除便签",
+                                tint = MaterialTheme.colorScheme.error
+                            ) {
+                                viewModel.deleteNote(note.id)
+                                selectedNoteId = null
+                            }
                         }
                     }
                 }
@@ -1240,6 +1415,20 @@ fun DeleteConfirmDialog(target: ClassEntity, onConfirm: () -> Unit, onDismiss: (
 
 data class BottomNavItem(val label: String, val icon: ImageVector)
 
+/**
+ * 四个导航项的**唯一来源**。
+ *
+ * 底栏（窄屏）与左侧导航栏（宽屏）都读它 —— 否则两处各写一份 listOf，
+ * 以后加一个 Tab 只改了其中一处，就会「手机上有、平板上没有」，
+ * 而且这种 bug 只有在平板上才看得见。
+ */
+private val APP_NAV_ITEMS = listOf(
+    BottomNavItem("今天", Icons.Default.Home),
+    BottomNavItem("课表", Icons.Default.DateRange),
+    BottomNavItem("便签", Icons.Default.Edit),
+    BottomNavItem("设置", Icons.Default.Settings)
+)
+
 @Composable
 fun BottomNavigationBar(
     selectedTab: Int,
@@ -1247,12 +1436,7 @@ fun BottomNavigationBar(
     currentWeek: Int?,
     onTabSelected: (Int) -> Unit
 ) {
-    val items = listOf(
-        BottomNavItem("今天", Icons.Default.Home),
-        BottomNavItem("课表", Icons.Default.DateRange),
-        BottomNavItem("便签", Icons.Default.Edit),
-        BottomNavItem("设置", Icons.Default.Settings)
-    )
+    val items = APP_NAV_ITEMS
     // 运行中 ↔ 未启动之间切换时颜色做过渡，不是硬切。
     // 这里刻意不用 rememberInfiniteTransition 做「呼吸」：那是一条永不停止的动画，
     // 会让整个 App 一帧都闲不下来（一直占着帧时钟），得不偿失。
@@ -1349,6 +1533,123 @@ fun BottomNavigationBar(
     }
 }
 
+// ── 宽屏：左侧导航栏 ────────────────────────────────────────────
+
+/**
+ * 侧栏整体宽度，与 M3 `NavigationRail` 的固定宽度一致。
+ *
+ * ⚠️ **必须显式写死**：下面那个状态脚注用了 `fillMaxWidth()`，
+ * 而 Column 的宽度取「最宽的孩子」—— 不约束的话 Column 会被撑到整屏宽，
+ * 于是同级的 1dp 分隔线被推出屏幕、内容区（`weight(1f)`）被挤成 0 宽。
+ * 症状是「右半屏一片空白、状态点跑到屏幕正中」，实测踩过一次。
+ */
+private val NAV_RAIL_WIDTH = 80.dp
+
+/**
+ * 宽屏（`>= 600dp`）下的左侧导航栏，取代底栏。
+ *
+ * 用 M3 的 [NavigationRail] 而不是自己画一个：它自带选中指示器、无障碍语义、
+ * 键盘 / 手柄方向键导航，宽度（80dp）与图标-文字间距也都是 Material 规范值。
+ * 自己画一遍只会得到「看起来像但不是」的东西。
+ *
+ * 与底栏的两点差别：
+ *  - 底栏那条「提醒服务运行中 · 第 N 周」是横排的整行；这里只有 80dp 宽，
+ *    改成**竖排的三行小字**，信息一条不少。
+ *  - 底栏用一条横线把导航与内容分开；这里换成 1dp 竖线。
+ *    两者是同一个东西转了 90°，配色同源（都是 `outlineVariant`）。
+ */
+@Composable
+fun AppNavigationRail(
+    selectedTab: Int,
+    isRunning: Boolean,
+    currentWeek: Int?,
+    onTabSelected: (Int) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    // 与底栏同一条规则：深色下选中项文字用白，压在主色上不发闷
+    val isDarkBar = scheme.surface.luminance() < 0.5f
+    val dotColor by animateColorAsState(
+        targetValue = if (isRunning) Color(0xFF4CAF50) else Color(0xFFE53935),
+        animationSpec = tween(ENTER_MS),
+        label = "railServiceDotColor"
+    )
+
+    Row(modifier = Modifier.fillMaxHeight()) {
+        Column(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(NAV_RAIL_WIDTH)
+                .background(scheme.surface)
+        ) {
+            NavigationRail(
+                // weight 而不是 fillMaxHeight：下面还要塞状态脚注，
+                // 导航项占剩下的高度，脚注永远贴着底边
+                modifier = Modifier.weight(1f),
+                // 与底栏一致：容器色用 surface 而不是默认的 surfaceContainer，
+                // 本项目整体是「白底 + 极淡描边」的扁平风，导航区再抬一层灰会显脏
+                // （NavigationRail 没有 tonalElevation 参数，层级完全由 containerColor 决定）
+                containerColor = scheme.surface,
+                header = {
+                    // 品牌标识。底栏太矮塞不下，侧栏竖排空间富裕，正好补上「这是哪个应用」
+                    Icon(
+                        painter = painterResource(R.drawable.ic_launcher_clock),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(top = 16.dp, bottom = 6.dp)
+                            .size(30.dp),
+                        tint = scheme.primary
+                    )
+                }
+            ) {
+                APP_NAV_ITEMS.forEachIndexed { index, item ->
+                    NavigationRailItem(
+                        selected = selectedTab == index,
+                        onClick = { onTabSelected(index) },
+                        icon = { Icon(item.icon, contentDescription = item.label) },
+                        label = { Text(item.label, fontSize = 11.sp) },
+                        colors = NavigationRailItemDefaults.colors(
+                            selectedIconColor = scheme.onPrimaryContainer,
+                            selectedTextColor = if (isDarkBar) Color.White else scheme.primary,
+                            indicatorColor = scheme.primaryContainer,
+                            unselectedIconColor = scheme.onSurfaceVariant,
+                            unselectedTextColor = scheme.onSurfaceVariant
+                        )
+                    )
+                }
+            }
+
+            // ── 状态脚注 ──
+            // 底栏里这行是横排整行；这里 80dp 放不下，改成竖排三段，信息一条不少
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(Modifier.size(6.dp).background(dotColor, CircleShape))
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = if (isRunning) "运行中" else "未启动",
+                    fontSize = 10.sp,
+                    color = scheme.onSurfaceVariant
+                )
+                currentWeek?.let {
+                    Text("第 $it 周", fontSize = 10.sp, color = scheme.onSurfaceVariant)
+                }
+            }
+        }
+
+        // 竖分隔线。用 Box 而不是 M3 的 VerticalDivider：
+        // 后者是较新的 API，这里手画一行更省事、也更不容易踩版本差异
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(1.dp)
+                .background(scheme.outlineVariant)
+        )
+    }
+}
+
 // ── 快速便签 ────────────────────────────────────────────────────
 
 /**
@@ -1399,7 +1700,9 @@ fun NoteListView(
     onEdit: (NoteEntity) -> Unit,
     onDelete: (NoteEntity) -> Unit,
     onMove: (Int, Int) -> Unit,
-    onAdd: () -> Unit
+    onAdd: () -> Unit,
+    /** 宽屏双栏时用：列表只占左侧一栏，不再是整屏 */
+    modifier: Modifier = Modifier
 ) {
     // Deadline 倒计时自己走字。和「今天」页一样 30 秒一格 ——
     // 倒计时最小档是「分钟」，30 秒的刷新足够让它看起来是活的，
@@ -1415,7 +1718,11 @@ fun NoteListView(
     }
 
     if (notes.isEmpty()) {
-        EmptyNotes(searching = searching, onAdd = onAdd)
+        // 包一层 Box 是为了让传进来的 modifier（双栏时限定宽度）在空态下同样生效 ——
+        // 否则空态会横跨整个宽度，把右侧详情面板挤没
+        Box(modifier = modifier) {
+            EmptyNotes(searching = searching, onAdd = onAdd)
+        }
         return
     }
 
@@ -1456,7 +1763,7 @@ fun NoteListView(
     // 最终采用**落点命中判定**：deselect 拿到按下坐标后，先问 LazyColumn
     // 「这个 y 是否落在某条便签的范围内」。落在卡片上 → 这次点击归卡片，自己不动；
     // 落在真正的空白处 → 才取消选中。判定依据是 layoutInfo 的实际几何，不靠时序博弈。
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -2587,6 +2894,164 @@ private val ClassEntity.startMinute: Int
 private val ClassEntity.endMinute: Int
     get() = TimeAxis.minutesOf(endTime) ?: Int.MIN_VALUE
 
+// ── 宽屏：便签「列表 + 详情」双栏 ────────────────────────────────
+
+/** 双栏时左侧列表的宽度。360dp 放得下一行两行文字，又不至于把右侧详情挤窄 */
+private val NOTE_LIST_PANE_WIDTH = 360.dp
+
+/**
+ * 宽屏（`>= 900dp`）下的便签页：左侧列表 + 右侧详情面板。
+ *
+ * **为什么详情是「只读面板 + 编辑按钮」而不是内联编辑器**：
+ * 编辑表单有五块（文字 / 调色盘 / 分类 / 自定义名 / Deadline），塞进 460dp 宽的面板里
+ * 会挤成一条；而那个对话框已经调好了，复用它是零成本。
+ * 双栏真正解决的是「看一眼这条便签写了什么、不用来回开关弹窗」——
+ * 那就把「看」做成常驻面板，「改」仍然走对话框。这也正是桌面端 `NotesPage.kt` 的做法。
+ */
+@Composable
+fun NoteTwoPane(
+    notes: List<NoteEntity>,
+    searching: Boolean,
+    selected: NoteEntity?,
+    selectedId: Int?,
+    onSelect: (NoteEntity) -> Unit,
+    onDeselect: () -> Unit,
+    onEdit: (NoteEntity) -> Unit,
+    onDelete: (NoteEntity) -> Unit,
+    onMove: (Int, Int) -> Unit,
+    onAdd: () -> Unit
+) {
+    Row(modifier = Modifier.fillMaxSize()) {
+        NoteListView(
+            notes = notes,
+            searching = searching,
+            selectedId = selectedId,
+            onSelect = onSelect,
+            onDeselect = onDeselect,
+            onEdit = onEdit,
+            onDelete = onDelete,
+            onMove = onMove,
+            onAdd = onAdd,
+            modifier = Modifier
+                .width(NOTE_LIST_PANE_WIDTH)
+                .fillMaxHeight()
+        )
+        // 竖分隔线：和课表页、导航栏用同一条规则（outlineVariant / 1dp）
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.outlineVariant)
+        )
+        NoteDetailPane(
+            note = selected,
+            onEdit = onEdit,
+            onDelete = onDelete,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+        )
+    }
+}
+
+/**
+ * 便签详情面板。
+ *
+ * 刻意**不是**一个 Card：它是一整栏常驻区域，再套一层卡片就成了「卡片里的卡片」，
+ * 在平板上会显得很碎。这里用「左侧色条 + 留白分区」表达层级，
+ * 和列表里那一行用同一条色条，让人一眼看出两边说的是同一条便签。
+ */
+@Composable
+private fun NoteDetailPane(
+    note: NoteEntity?,
+    onEdit: (NoteEntity) -> Unit,
+    onDelete: (NoteEntity) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scheme = MaterialTheme.colorScheme
+
+    if (note == null) {
+        // 空态要说清「怎么才能看到内容」，不然一块空白会让人以为页面坏了
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Text(
+                "从左侧选一条便签",
+                fontSize = 13.sp,
+                color = scheme.onSurfaceVariant
+            )
+        }
+        return
+    }
+
+    val accent = notePaletteColor(note.colorIndex)
+    val hasType = note.typeIndex != NOTE_TYPE_NONE
+    val hasDeadline = note.deadlineAt > 0L
+    // 倒计时按打开面板的时刻算一次即可 —— 面板不是常驻走字的表盘，
+    // 为它挂一个 30 秒的时钟只会白白重组这一栏
+    val now = System.currentTimeMillis()
+
+    Column(modifier = modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // 和列表行同色同宽的那条竖线
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(20.dp)
+                    .background(accent, RoundedCornerShape(2.dp))
+            )
+            Spacer(Modifier.width(10.dp))
+            Text("便签详情", fontSize = 13.sp, color = scheme.onSurfaceVariant)
+        }
+
+        if (hasType || hasDeadline) {
+            Spacer(Modifier.height(14.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (hasType) TypeBadge(label = note.typeLabel(), accent = accent)
+                if (hasDeadline) {
+                    if (hasType) Spacer(Modifier.width(8.dp))
+                    DeadlineBadge(deadlineAt = note.deadlineAt, now = now, accent = accent)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // 正文可滚：长便签在面板里不该被截断，也不该把下面的按钮顶出屏幕
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text(
+                text = note.text,
+                fontSize = 15.sp,
+                lineHeight = 24.sp,
+                color = scheme.onSurface
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = { onEdit(note) }) {
+                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("编辑", fontSize = 13.sp)
+            }
+            Spacer(Modifier.width(10.dp))
+            TextButton(onClick = { onDelete(note) }) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = scheme.error
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("删除", fontSize = 13.sp, color = scheme.error)
+            }
+        }
+    }
+}
+
 // ── 周课表：表格 / 列表两种模式 ──────────────────────────────────
 
 enum class WeekMode { GRID, LIST }
@@ -2789,7 +3254,14 @@ fun WeekGrid(
     // 因为右下角的 FAB 要读它来决定是否上移，避开底部浮出的详情条。
     selectedClassId: Int?,
     onSelectClassId: (Int?) -> Unit,
-    onEdit: (ClassEntity) -> Unit
+    onEdit: (ClassEntity) -> Unit,
+    /**
+     * 选中课程后是否在网格下方浮出详情条。
+     *
+     * 宽屏双栏时传 `false` —— 详情改由 MainScreen 放到右侧常驻面板，
+     * 网格下方就不再需要那一条了（同一节课的信息说两遍纯属浪费纵向空间）。
+     */
+    showInlineDetail: Boolean = true
 ) {
     val span = remember(classes) { TimeAxis.spanOf(classes) }
     // 手动高亮的列。三态：还没干预（跟随「今天」）/ 手动选了某天 / 手动全部取消。
@@ -3240,22 +3712,27 @@ fun WeekGrid(
             // 从网格下方**滑上来**，而不只是「展开」：展开负责让高度平滑变化、
             // 不把上面的网格顶得一跳；滑入负责给出「它从下面浮出来」的方向感。
             // 两者叠在一起 = 一边长高一边上移，读起来就是「从底边升起来」
-            AnimatedVisibility(
-                visible = selectedClass != null,
-                enter = fadeIn(tween(ENTER_MS)) +
-                    expandVertically(tween(ENTER_MS), expandFrom = Alignment.Top) +
-                    slideInVertically(tween(ENTER_MS)) { it / 2 },
-                exit = fadeOut(tween(EXIT_MS)) +
-                    shrinkVertically(tween(EXIT_MS), shrinkTowards = Alignment.Top) +
-                    slideOutVertically(tween(EXIT_MS)) { it / 2 }
-            ) {
-                selectedClass?.let { cls ->
-                    ClassDetailCard(
-                        cls = cls,
-                        isToday = cls.dayOfWeek == highlightDay,
-                        onEdit = { onEdit(cls) },
-                        onDismiss = { onSelectClassId(null) }
-                    )
+            //
+            // 宽屏双栏时**不画**：详情卡由 MainScreen 放到右侧常驻面板里。
+            // 这里若不关掉，同一节课的信息会同时出现在网格下方和右栏，重复且浪费高度。
+            if (showInlineDetail) {
+                AnimatedVisibility(
+                    visible = selectedClass != null,
+                    enter = fadeIn(tween(ENTER_MS)) +
+                        expandVertically(tween(ENTER_MS), expandFrom = Alignment.Top) +
+                        slideInVertically(tween(ENTER_MS)) { it / 2 },
+                    exit = fadeOut(tween(EXIT_MS)) +
+                        shrinkVertically(tween(EXIT_MS), shrinkTowards = Alignment.Top) +
+                        slideOutVertically(tween(EXIT_MS)) { it / 2 }
+                ) {
+                    selectedClass?.let { cls ->
+                        ClassDetailCard(
+                            cls = cls,
+                            isToday = cls.dayOfWeek == highlightDay,
+                            onEdit = { onEdit(cls) },
+                            onDismiss = { onSelectClassId(null) }
+                        )
+                    }
                 }
             }
 
@@ -3843,6 +4320,53 @@ private fun GridCell(
     }
 }
 
+// ── 宽屏：课表「网格 + 详情」双栏 ────────────────────────────────
+
+/**
+ * 双栏时右侧详情面板的宽度。
+ *
+ * 320dp 是「课程名两行 + 时间·教室·老师三行 + 两个动作按钮」都放得下的下限，
+ * 再窄课程名和教室就会频繁截断 —— 而详情面板存在的唯一理由就是**不被截断**。
+ */
+private val WEEK_DETAIL_PANE_WIDTH = 320.dp
+
+/**
+ * 宽屏双栏时课表页的右侧详情面板。
+ *
+ * **复用 [ClassDetailCard] 本身而不是另画一个**：那条卡片的配色规则
+ * （今日蓝 / 非今日灰、左侧 4dp 竖条）和网格里被选中的块是同一套，
+ * 换到右栏之后它仍然「是同一个东西」—— 用户不需要重新建立对应关系。
+ * 这里只负责给它一个常驻的位置，以及一个说清「怎么才能看到内容」的空态。
+ */
+@Composable
+fun WeekDetailPane(
+    cls: ClassEntity?,
+    highlightDay: String?,
+    onEdit: (ClassEntity) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        if (cls == null) {
+            // 空态必须说清怎么才能有内容，否则一整块空白会被当成页面坏了
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    "点左侧任意一节课查看详情",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            ClassDetailCard(
+                cls = cls,
+                isToday = cls.dayOfWeek == highlightDay,
+                onEdit = { onEdit(cls) },
+                onDismiss = onDismiss
+            )
+        }
+    }
+}
+
 // ── 旧版课表（v2.0 / git 版）：按天分组、可折叠 ──────────────────
 //
 // 设置里「实验性：时间轴网格课表」关掉时，课表用这一版渲染。
@@ -4038,7 +4562,11 @@ fun WeekView(
      * 两种渲染共用同一个 [WeekHeader]（切周 / 校准照旧可用），只是网格那支
      * 才显示「表格 / 列表」分段控件。
      */
-    experimentalGrid: Boolean = true
+    experimentalGrid: Boolean = true,
+    /** 见 [WeekGrid]：宽屏双栏时详情卡不放网格下方，改由 MainScreen 放到右栏 */
+    showInlineDetail: Boolean = true,
+    /** 宽屏双栏时课表只占左栏，不再是整屏 */
+    modifier: Modifier = Modifier
 ) {
     // 显示模式和正在浏览的周次都由 MainScreen 持有：切 Tab 回来不会丢
     val today = todayName()
@@ -4053,7 +4581,7 @@ fun WeekView(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = modifier.fillMaxSize()) {
         // 表头固定：切模式、换周时它都不动，只有下面的内容做过渡
         WeekHeader(
             currentWeek = currentWeek,
@@ -4078,7 +4606,8 @@ fun WeekView(
                 today = today,
                 onEdit = onEdit,
                 selectedClassId = selectedClassId,
-                onSelectClassId = onSelectClassId
+                onSelectClassId = onSelectClassId,
+                showInlineDetail = showInlineDetail
             )
         } else {
             LegacyWeekView(classes = visible, onEdit = onEdit)
@@ -4103,7 +4632,9 @@ private fun ExperimentalWeekContent(
     onEdit: (ClassEntity) -> Unit,
     /** 选中的课程块 id，由 MainScreen 持有 —— 详情条和 FAB 上移都要读它 */
     selectedClassId: Int?,
-    onSelectClassId: (Int?) -> Unit
+    onSelectClassId: (Int?) -> Unit,
+    /** 见 [WeekGrid]：宽屏双栏时详情卡不放网格下方，改由 MainScreen 放到右栏 */
+    showInlineDetail: Boolean = true
 ) {
     // 内容的过渡同时管两件事，靠 transitionSpec 区分：
     //  - 切「表格 / 列表」→ 淡入淡出 + 轻微横向位移，方向跟着分段控件的左右位置走
@@ -4143,7 +4674,8 @@ private fun ExperimentalWeekContent(
                 highlightDay = dayHighlight,
                 selectedClassId = selectedClassId,
                 onSelectClassId = onSelectClassId,
-                onEdit = onEdit
+                onEdit = onEdit,
+                showInlineDetail = showInlineDetail
             )
             WeekMode.LIST -> WeekDayList(
                 classes = visible,
