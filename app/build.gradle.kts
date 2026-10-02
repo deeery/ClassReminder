@@ -25,8 +25,8 @@ android {
         applicationId = "com.example.classreminder"
         minSdk = 21
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = 5
+        versionName = "1.4"
         // 应用名走占位符：debug 变体可以额外带 -test 后缀
         manifestPlaceholders["appLabel"] = "StuMate"
     }
