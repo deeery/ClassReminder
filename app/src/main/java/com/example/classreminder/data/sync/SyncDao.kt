@@ -90,6 +90,24 @@ abstract class SyncDao {
     @Query("DELETE FROM notes")
     abstract suspend fun deleteAllNotes()
 
+    // ── 写：按 id 物理删除（同 uid 收敛时用） ────────────────────
+
+    /**
+     * 按主键物理删除若干行。
+     *
+     * ⚠️ 只给「同一个 uid 出现了多行」这种**铁定是脏数据**的场景用：
+     * uid 是跨设备唯一标识，同一 uid 的多行必然是同一条记录被重复写进去的，
+     * 留哪一行都不影响语义（见 `SyncEngine.collapseSameUidDuplicates`）。
+     * 正常删除一律走软删（`deletedAt`），否则删除传播不出去。
+     *
+     * @return 实际删掉的行数
+     */
+    @Query("DELETE FROM classes WHERE id IN (:ids)")
+    abstract suspend fun deleteClassesByIds(ids: List<Int>): Int
+
+    @Query("DELETE FROM notes WHERE id IN (:ids)")
+    abstract suspend fun deleteNotesByIds(ids: List<Int>): Int
+
     // ── 维护 ────────────────────────────────────────────────────
 
     /**
