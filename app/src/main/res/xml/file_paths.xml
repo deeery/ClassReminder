@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 能授出哪些路径。
+
+  ⚠️ 只放「应用私有外部目录下的 Download 子目录」，与
+  `UpdateCenter.downloadDir()` 的落点严格对应。两边不一致的后果是
+  `getUriForFile` 直接抛 IllegalArgumentException（"Failed to find configured root"），
+  而且那条报错不会告诉你该加哪一行。
+
+  用 external-files-path 而不是 external-path：后者会暴露整个公共外部存储，
+  FileProvider 的语义是「只授出我明确声明的那一小块」。
+-->
+<paths>
+    <external-files-path name="updates" path="Download/" />
+    <files-path name="updates_internal" path="downloads/" />
+</paths>

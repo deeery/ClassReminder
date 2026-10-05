@@ -9,6 +9,9 @@ object Prefs {
     private const val KEY_AUTO_START = "auto_start"
     private const val KEY_SHOW_POPUP = "show_popup"
 
+    private const val KEY_AUTO_CHECK_UPDATE = "auto_check_update"
+    private const val KEY_NOTIFY_UPDATE = "notify_update"
+
     private const val DEFAULT_ADVANCE_MIN = 30
     private const val MIN_ADVANCE_MIN = 1
     private const val MAX_ADVANCE_MIN = 180
@@ -166,6 +169,40 @@ object Prefs {
     fun setExperimentalGrid(ctx: Context, enabled: Boolean) {
         val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
         sp.edit().putBoolean(KEY_EXPERIMENTAL_GRID, enabled).apply()
+    }
+
+    // ── 更新检查（与桌面端同名同默认值） ─────────────────────────────
+
+    /**
+     * 启动时自动去 GitHub 查有没有新版本。默认开。
+     *
+     * 关掉后只在设置页「关于」里手动点「检查更新」。核心功能完全离线，
+     * 检查更新只是锦上添花，所以必须能被彻底关掉。
+     */
+    fun getAutoCheckUpdate(ctx: Context): Boolean {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        return sp.getBoolean(KEY_AUTO_CHECK_UPDATE, true)
+    }
+
+    fun setAutoCheckUpdate(ctx: Context, enabled: Boolean) {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        sp.edit().putBoolean(KEY_AUTO_CHECK_UPDATE, enabled).apply()
+    }
+
+    /**
+     * 查到新版本时主动提醒。默认开。
+     *
+     * 关掉 ≠ 不检查：检查照旧，只是结果安静地躺在设置页里，不主动打扰。
+     * 这是「提示可选」那条需求的落点。
+     */
+    fun getNotifyUpdate(ctx: Context): Boolean {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        return sp.getBoolean(KEY_NOTIFY_UPDATE, true)
+    }
+
+    fun setNotifyUpdate(ctx: Context, enabled: Boolean) {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        sp.edit().putBoolean(KEY_NOTIFY_UPDATE, enabled).apply()
     }
 }
 

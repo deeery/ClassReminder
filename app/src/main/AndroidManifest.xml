@@ -23,6 +23,13 @@
     <!-- 到点时唤醒屏幕：ColorOS 等 ROM 会拦全屏弹窗，只剩「通知 + 亮屏」这条可靠路径 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- 应用内更新：下载完 APK 要交给系统安装器。
+         安卓不允许应用静默安装，所以这条权限只是「允许发起安装请求」，
+         用户仍然会在系统弹窗上点一次「安装」。
+         Android 8+ 还要用户在设置里按应用授权（canRequestPackageInstalls()），
+         没授权时我们引导过去，不硬闯。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -60,6 +67,25 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- 应用内更新下载下来的 APK 要通过 FileProvider 授出 uri 权限。
+             不能直接传 file:// —— Android 7+ 会抛 FileUriExposedException。
+
+             ⚠️ authority 必须走 `${applicationId}` 占位符，不能写死。
+             debug 变体带 `applicationIdSuffix = ".test"`，与正式版**同机共存**；
+             两边写同一个 authority 就会有两个已安装应用声明同一个 provider，
+             PackageManager 解析到哪个是不确定的 —— 症状是「正式版更新时
+             getUriForFile 抛 IllegalArgumentException」。代码侧对应
+             `UpdateCenter.AUTHORITY = "${'$'}{ctx.packageName}.fileprovider"`。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

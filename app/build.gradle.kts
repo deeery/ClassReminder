@@ -17,6 +17,22 @@ val keystoreProps = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 
+// 版本号的**唯一来源**。绝不要在代码里手写版本字符串 ——
+// 更新检查拿 `BuildConfig.VERSION_NAME` 去和 GitHub Release 的 tag 比，
+// 一旦和这里对不上，用户要么收不到更新，要么被反复提示同一个版本。
+//
+// `-PstumateVersionName=1.5` / `-PstumateVersionCode=6` 是**只在构建时**生效的
+// 验收开关（默认值就是下面那两个正式值）：装一个「自称旧版」的包，去对真实的
+// v1.6 Release 走一遍「发现新版本 → 下载 APK → 拉起系统安装器 → 系统覆盖安装」。
+// 桌面端对应的开关是 `-Dstumate.currentVersion`（那边是运行时系统属性，
+// 安卓只能在构建期注入）。不传参数时产物与正式包**逐字节同源**。
+//
+// ⚠️ 验收包必须也用 **release 签名**（`assembleRelease`）：debug 签名和正式签名
+// 不同，系统安装器会直接 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` ——
+// 那样测的就不是更新链路，而是「签名不匹配」。
+val appVersionName = providers.gradleProperty("stumateVersionName").getOrElse("1.5")
+val appVersionCode = providers.gradleProperty("stumateVersionCode").getOrElse("6").toInt()
+
 android {
     namespace = "com.example.classreminder"
     compileSdk = 34
@@ -25,8 +41,8 @@ android {
         applicationId = "com.example.classreminder"
         minSdk = 21
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = appVersionCode
+        versionName = appVersionName
         // 应用名走占位符：debug 变体可以额外带 -test 后缀
         manifestPlaceholders["appLabel"] = "StuMate"
     }
@@ -69,6 +85,9 @@ android {
 
     buildFeatures {
         compose = true
+        // AGP 8 起 BuildConfig 默认不生成。更新检查要读 VERSION_NAME
+        // （版本比较的唯一来源，绝不能手写字符串常量），所以显式打开。
+        buildConfig = true
     }
 
     composeOptions {

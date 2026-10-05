@@ -136,6 +136,8 @@ import com.example.classreminder.data.deadlineTimeLabel
 import com.example.classreminder.data.hasDeadline
 import com.example.classreminder.data.noteTypeAt
 import com.example.classreminder.data.typeLabel
+import com.example.classreminder.data.update.UpdateCenter
+import com.example.classreminder.data.update.UpdateState
 import com.example.classreminder.Prefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -668,6 +670,29 @@ fun MainScreen(
     // 设置页各分组的展开状态。**只活在内存里** —— 关闭进程即回到默认（账号置顶、其余折叠）。
     // 提在这里而不是设置页内部，是因为切 Tab 会把设置页整个销毁。详见 SettingsSectionState。
     val settingsSections = remember { SettingsSectionState() }
+
+    // ── 更新检查 ──
+    // 启动时静默查一次 GitHub Releases。失败**不留痕**（回到 Idle）：
+    // 没网、被限流都不是用户此刻该看到的报错，用户想查会自己去点「检查更新」。
+    // 网络调用是阻塞式的（项目不引三方库，用 HttpURLConnection），必须挪到 IO 线程，
+    // 否则会卡住首帧。
+    val updateState by UpdateCenter.state.collectAsState()
+    val updateAvailable = updateState as? UpdateState.Available
+    val notifyUpdate = remember(settingsSections.updatePrefsRevision) { Prefs.getNotifyUpdate(ctx) }
+    val showUpdateDot = updateAvailable != null && notifyUpdate
+    LaunchedEffect(Unit) {
+        if (Prefs.getAutoCheckUpdate(ctx)) {
+            withContext(Dispatchers.IO) { UpdateCenter.check(ctx, manual = false) }
+        }
+    }
+    // 查到新版本时弹一次 Toast。key 用版本号而不是 updateState：
+    // 状态还会经历 Downloading / InstallerLaunched 等变化，绑状态会重复弹。
+    LaunchedEffect(updateAvailable?.version) {
+        val v = updateAvailable?.version ?: return@LaunchedEffect
+        if (Prefs.getNotifyUpdate(ctx)) {
+            Toast.makeText(ctx, "发现新版本 $v，可在「设置 → 关于」更新", Toast.LENGTH_LONG).show()
+        }
+    }
     // 「今天」页的顶栏要跟着走字：问候语（早上好 / 午安 / …）跨档时要自己换，
     // 日期副标题也一样。所以这里留一个每 30 秒刷新一次的「现在」。
     // 和 TodayScreen 内部那份是分开的：顶栏属于 Scaffold，没法读 TodayScreen 的局部状态。
@@ -907,6 +932,7 @@ fun MainScreen(
                     selectedTab = selectedTab,
                     isRunning = serviceRunning,
                     currentWeek = currentWeek,
+                    updateDot = showUpdateDot,
                     onTabSelected = selectTab
                 )
             }
@@ -1047,6 +1073,7 @@ fun MainScreen(
                         selectedTab = selectedTab,
                         isRunning = serviceRunning,
                         currentWeek = currentWeek,
+                        updateDot = showUpdateDot,
                         onTabSelected = selectTab
                     )
                 }
@@ -1468,11 +1495,14 @@ private val APP_NAV_ITEMS = listOf(
     BottomNavItem("设置", Icons.Default.Settings)
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BottomNavigationBar(
     selectedTab: Int,
     isRunning: Boolean,
     currentWeek: Int?,
+    /** 有新版本时在「设置」图标右上角挂一个小圆点 */
+    updateDot: Boolean = false,
     onTabSelected: (Int) -> Unit
 ) {
     val items = APP_NAV_ITEMS
@@ -1540,14 +1570,23 @@ fun BottomNavigationBar(
                     selected = isSelected,
                     onClick = { onTabSelected(index) },
                     icon = {
-                        Icon(
-                            item.icon,
-                            contentDescription = item.label,
-                            modifier = Modifier.graphicsLayer {
-                                scaleX = iconScale
-                                scaleY = iconScale
+                        // 「设置」是新版本提示的落点，所以角标只挂在这一项上。
+                        // 用 BadgedBox 而不是自己叠 Box：它按 M3 规范把角标定位在图标
+                        // 右上角、并自动把图标让开一点，自己摆很容易压住图标笔画。
+                        BadgedBox(
+                            badge = {
+                                if (updateDot && item.label == "设置") Badge()
                             }
-                        )
+                        ) {
+                            Icon(
+                                item.icon,
+                                contentDescription = item.label,
+                                modifier = Modifier.graphicsLayer {
+                                    scaleX = iconScale
+                                    scaleY = iconScale
+                                }
+                            )
+                        }
                     },
                     label = {
                         Text(
@@ -1597,11 +1636,14 @@ private val NAV_RAIL_WIDTH = 80.dp
  *  - 底栏用一条横线把导航与内容分开；这里换成 1dp 竖线。
  *    两者是同一个东西转了 90°，配色同源（都是 `outlineVariant`）。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppNavigationRail(
     selectedTab: Int,
     isRunning: Boolean,
     currentWeek: Int?,
+    /** 有新版本时在「设置」图标右上角挂一个小圆点（与底栏同一条规则） */
+    updateDot: Boolean = false,
     onTabSelected: (Int) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -1644,7 +1686,15 @@ fun AppNavigationRail(
                     NavigationRailItem(
                         selected = selectedTab == index,
                         onClick = { onTabSelected(index) },
-                        icon = { Icon(item.icon, contentDescription = item.label) },
+                        icon = {
+                            BadgedBox(
+                                badge = {
+                                    if (updateDot && item.label == "设置") Badge()
+                                }
+                            ) {
+                                Icon(item.icon, contentDescription = item.label)
+                            }
+                        },
                         label = { Text(item.label, fontSize = 11.sp) },
                         colors = NavigationRailItemDefaults.colors(
                             selectedIconColor = scheme.onPrimaryContainer,
@@ -5414,6 +5464,209 @@ internal fun SettingsPage(
                     onMessage = { message -> Toast.makeText(ctx, message, Toast.LENGTH_LONG).show() }
                 )
             }
+
+            // ── 关于：版本号 + 更新 ──
+            CollapsibleSection(
+                title = "关于",
+                expanded = sections.about,
+                onToggle = { sections.about = !sections.about }
+            ) {
+                AboutSection(ctx, sections)
+            }
+        }
+    }
+}
+
+/**
+ * 「关于」分组：版本号一行 + 更新状态区。
+ *
+ * 状态直接从 [UpdateCenter.state] 收，不走参数层层传 —— 它是进程内单例，
+ * 设置页、导航角标、启动检查读的是同一个 flow，不存在「两处状态不同步」。
+ */
+@Composable
+private fun AboutSection(ctx: android.content.Context, sections: SettingsSectionState) {
+    val scheme = MaterialTheme.colorScheme
+    val state by UpdateCenter.state.collectAsState()
+    var autoCheck by remember { mutableStateOf(Prefs.getAutoCheckUpdate(ctx)) }
+    var notify by remember { mutableStateOf(Prefs.getNotifyUpdate(ctx)) }
+    val scope = rememberCoroutineScope()
+
+    // 版本号
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column {
+            Text("StuMate", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text(
+                "课表 · 提醒 · 便签",
+                fontSize = 11.sp,
+                color = scheme.onSurface.copy(alpha = 0.55f)
+            )
+        }
+        Text(
+            "v${UpdateCenter.currentVersion}",
+            fontSize = 13.sp,
+            color = scheme.onSurfaceVariant
+        )
+    }
+
+    Spacer(Modifier.height(12.dp))
+    // 用 Divider 而不是 HorizontalDivider：本项目的 material3（BOM 2024.01.00）
+    // 还没有 HorizontalDivider 这个改名后的 API，文件里其余分隔线也都用 Divider。
+    Divider(color = scheme.outlineVariant)
+    Spacer(Modifier.height(12.dp))
+
+    UpdateStatusBlock(ctx, state, scope)
+
+    Spacer(Modifier.height(4.dp))
+    SwitchRow("启动时自动检查更新", autoCheck) {
+        autoCheck = it
+        Prefs.setAutoCheckUpdate(ctx, it)
+    }
+    SwitchRow("有新版本时提醒我", notify) {
+        notify = it
+        Prefs.setNotifyUpdate(ctx, it)
+        sections.updatePrefsRevision++
+    }
+}
+
+/**
+ * 更新状态区。按 [UpdateState] 的每个分支给一套「一句话 + 一个动作」。
+ *
+ * 刻意**不做**成「一个按钮随状态变形」：那样用户看到同一个按钮在「检查更新 / 立即更新 /
+ * 立即重启」之间跳，反而不知道点下去会发生什么。状态文字说清楚现状，
+ * 按钮只做文字说的事，需要时并排两个（如「立即更新」+「打开下载页」）。
+ */
+@Composable
+private fun UpdateStatusBlock(
+    ctx: android.content.Context,
+    state: UpdateState,
+    scope: kotlinx.coroutines.CoroutineScope
+) {
+    val scheme = MaterialTheme.colorScheme
+
+    @Composable
+    fun statusLine(text: String, emphasize: Boolean = false) {
+        Text(
+            text = text,
+            fontSize = 13.sp,
+            color = if (emphasize) scheme.primary else scheme.onSurface.copy(alpha = 0.7f)
+        )
+    }
+
+    when (state) {
+        is UpdateState.Idle -> {
+            statusLine("点击下面的按钮检查是否有新版本。")
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = { scope.launch { UpdateCenter.check(ctx, manual = true) } },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("检查更新") }
+        }
+
+        is UpdateState.Checking -> {
+            statusLine("正在检查…")
+            Spacer(Modifier.height(10.dp))
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+
+        is UpdateState.UpToDate -> {
+            statusLine("已是最新版本（v${state.current}）", emphasize = true)
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = { scope.launch { UpdateCenter.check(ctx, manual = true) } },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("重新检查") }
+        }
+
+        is UpdateState.Available -> {
+            statusLine("有新版本 v${state.version}（当前 v${UpdateCenter.currentVersion}）", emphasize = true)
+            if (state.notes.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = state.notes,
+                    fontSize = 12.sp,
+                    color = scheme.onSurface.copy(alpha = 0.65f),
+                    // 更新说明可能很长（整段 changelog），限高 + 内部滚动，
+                    // 不让它把「关于」这一屏撑到看不见按钮
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 140.dp)
+                        .verticalScroll(rememberScrollState())
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            when {
+                state.canSelfInstall -> Button(
+                    onClick = { scope.launch { UpdateCenter.downloadAndInstall(ctx) } },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("下载并安装") }
+
+                state.blocked != null -> {
+                    statusLine(state.blocked)
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = { UpdateCenter.openInstallPermissionSettings(ctx) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("去授权") }
+                }
+
+                else -> statusLine("这个版本没有提供可安装的 APK。")
+            }
+            Spacer(Modifier.height(6.dp))
+            TextButton(
+                onClick = { UpdateCenter.openReleasePage(ctx, state.pageUrl) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("打开下载页") }
+        }
+
+        is UpdateState.Downloading -> {
+            statusLine("正在下载安装包…")
+            Spacer(Modifier.height(10.dp))
+            if (state.percent >= 0) {
+                LinearProgressIndicator(
+                    progress = state.percent / 100f,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "${state.percent}%（${state.received / 1024} / ${state.total / 1024} KB）",
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant
+                )
+            } else {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
+
+        is UpdateState.InstallerLaunched -> {
+            statusLine("安装包已交给系统安装器，请在弹窗里点「安装」。", emphasize = true)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "安装完成后 App 会自动重启；若没有，手动打开一次即可。",
+                fontSize = 11.sp,
+                color = scheme.onSurfaceVariant
+            )
+        }
+
+        is UpdateState.NeedsFullPackage -> {
+            statusLine("需要手动安装：${state.reason}")
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = { UpdateCenter.openReleasePage(ctx, state.pageUrl) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("打开下载页") }
+        }
+
+        is UpdateState.Failed -> {
+            Text("检查失败：${state.message}", fontSize = 13.sp, color = scheme.error)
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = { scope.launch { UpdateCenter.check(ctx, manual = true) } },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("重试") }
         }
     }
 }
@@ -5726,6 +5979,24 @@ internal class SettingsSectionState {
     var romGuide by mutableStateOf(false)
     var importTimetable by mutableStateOf(false)
     var backup by mutableStateOf(false)
+
+    /**
+     * 「关于」默认**展开**。
+     *
+     * 其余分组都是配置项，用户不动它就不用看；「关于」里放的版本号 + 更新入口是
+     * 「新版本来了」时用户唯一要去的地方，默认折上等于让刚收到提示的人再去点一下。
+     */
+    var about by mutableStateOf(true)
+
+    /**
+     * 「更新提醒」开关的改动计数。
+     *
+     * 导航栏那个小圆点读的是 `Prefs`（落盘偏好，不是 Compose 状态），用户在设置页把它
+     * 关掉之后 `MainScreen` 不会自己重组，圆点就会赖着不走。用一个只增不减的计数器把
+     * 这次改动广播出去：`MainScreen` 里 `remember(sections.updatePrefsRevision)` 重读一次 Prefs。
+     * 比把 Prefs 包成 StateFlow 轻得多，也不用给它注入 Context。
+     */
+    var updatePrefsRevision by mutableStateOf(0)
 }
 
 /**
