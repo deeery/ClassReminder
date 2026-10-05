@@ -100,9 +100,17 @@ def version_name():
 
 
 def version_code():
+    """同上，只读 `stumateVersionCode` 的默认值。
+
+    ⚠️ 别写成 `versionCode\\s*=\\s*(\\d+)` —— 现在那一行是
+    `versionCode = appVersionCode`，正则匹配不到会**静默返回 0**，
+    于是打印出「versionCode 0」而没人发现。
+    """
     text = open(os.path.join(ROOT, "app", "build.gradle.kts"), encoding="utf-8").read()
-    m = re.search(r"versionCode\s*=\s*(\d+)", text)
-    return int(m.group(1)) if m else 0
+    m = re.search(r'stumateVersionCode"\)\.getOrElse\("(\d+)"\)', text)
+    if not m:
+        die("app/build.gradle.kts 里没找到 stumateVersionCode 的默认值")
+    return int(m.group(1))
 
 
 def apk_name(version):
