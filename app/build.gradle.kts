@@ -30,8 +30,8 @@ val keystoreProps = Properties().apply {
 // ⚠️ 验收包必须也用 **release 签名**（`assembleRelease`）：debug 签名和正式签名
 // 不同，系统安装器会直接 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` ——
 // 那样测的就不是更新链路，而是「签名不匹配」。
-val appVersionName = providers.gradleProperty("stumateVersionName").getOrElse("1.5")
-val appVersionCode = providers.gradleProperty("stumateVersionCode").getOrElse("6").toInt()
+val appVersionName = providers.gradleProperty("stumateVersionName").getOrElse("1.6")
+val appVersionCode = providers.gradleProperty("stumateVersionCode").getOrElse("7").toInt()
 
 android {
     namespace = "com.example.classreminder"
