@@ -8,6 +8,18 @@ import java.util.Locale
 /**
  * 快速便签。
  *
+ * **[title] 与 [content] 是 v9 从原来的单字段 `text` 拆出来的**：
+ * 老库的 `text` 整条搬进 [title]（用户的原话是「原先的内容直接加入标题」），
+ * [content] 一律从空串起步。拆开的原因是便签越写越长之后，
+ * 列表里一眼只能看到第一行 —— 有了标题，扫列表时至少知道每条在讲什么。
+ *
+ * [title] **必填**（UI 层拦空），[content] 可为空：一条只有标题的便签是合法的，
+ * 反过来不行（列表与今天页的摘要都靠标题兜底显示）。
+ *
+ * ⚠️ **字段顺序不能随便调**：Room 按实体字段顺序生成建表 DDL，
+ * 而桌面端 `Db.createTables` 的列顺序是照着这里写的 —— 两端 `.db` 要能互开。
+ * 顺序是 `id, title, content, position, …`。
+ *
  * [position] 是便签在列表里的显示顺序（越小越靠上）：新增时取「当前最小值 - 1」，
  * 于是新便签天然排在最顶端；拖动排序时整批重写。
  * [createdAt] 只作为 position 相同时的稳定兜底，不参与排序语义。
@@ -31,7 +43,12 @@ import java.util.Locale
 @Entity(tableName = "notes")
 data class NoteEntity(
     @PrimaryKey val id: Int,
-    val text: String,
+    val title: String,
+    /**
+     * 正文。默认空串只是**为了测试夹具省事**，生产代码一律显式传值 ——
+     * 尤其是 `BackupCodec.decodeNotes`，漏传会静默丢正文。
+     */
+    val content: String = "",
     val position: Int,
     val createdAt: Long = 0L,
     val colorIndex: Int = DEFAULT_NOTE_COLOR,

@@ -573,15 +573,30 @@ private fun NoteSummaryRow(note: NoteEntity, now: Long, onClick: () -> Unit) {
                     .background(noteColor)
             )
             Spacer(Modifier.width(11.dp))
-            Text(
-                text = note.text,
-                fontSize = 13.sp,
-                color = scheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            // 标题为主、正文为辅。正文为空时第二行整个不占位 ——
+            // 与便签页的列表行同一条规则，行高才不会忽高忽低
+            Column(
                 // 占满剩余宽度，把徽章和倒计时挤到右边去
                 modifier = Modifier.weight(1f)
-            )
+            ) {
+                Text(
+                    text = note.title,
+                    fontSize = 13.sp,
+                    color = scheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (note.content.isNotBlank()) {
+                    Text(
+                        text = note.content,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        color = scheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
             // 右侧：分类徽章 + Deadline 倒计时（和便签页同一套信息，位置也一致）
             val label = note.typeLabel()
             if (label.isNotEmpty() || note.hasDeadline) {

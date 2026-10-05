@@ -8,7 +8,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.classreminder.data.sync.SyncDao
 
-@Database(entities = [ClassEntity::class, NoteEntity::class], version = 8, exportSchema = false)
+@Database(entities = [ClassEntity::class, NoteEntity::class], version = 9, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun classDao(): ClassDao
     abstract fun noteDao(): NoteDao
@@ -137,6 +137,57 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * v8 → v9：把便签的单字段 `text` 拆成 `title` + `content`。
+         *
+         * **只能重建表，不能只 `ADD COLUMN`** —— 这次要的不是「多两列」而是「少一列」。
+         * 而 minSdk 21 自带的 SQLite 是 3.8.6：既没有 `RENAME COLUMN`（3.25+），
+         * 也没有 `DROP COLUMN`（3.35+）。桌面端用的是新版 sqlite-jdbc、本来能做，
+         * 但两端迁移写法必须一致才谈得上「`.db` 可互开」，所以两边都走
+         * 「建新表 → 搬数据 → 删旧表 → 改名」。
+         *
+         * 搬运规则：`title = text`、`content = ''`。
+         * 用户的原话是「原先的内容直接加入标题」，所以老便签整条文本落进标题，
+         * 正文从空串起步 —— 不会有「迁移后标题为空」的存量数据。
+         *
+         * ⚠️ 建表语句里的列顺序必须与 [NoteEntity] 的字段顺序**逐列一致**
+         * （Room 会拿它做 schema 校验，且两端 `.db` 要能互开）。
+         * 这里刻意**不写 `DEFAULT`** —— 与 Room 自动生成的 DDL 保持同形，
+         * 免得「迁移来的库」和「全新装的库」长得不一样。
+         *
+         * 整段不需要自己开事务：Room 已经把每个迁移包在事务里了。
+         */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `notes_new` (" +
+                        "`id` INTEGER NOT NULL, " +
+                        "`title` TEXT NOT NULL, " +
+                        "`content` TEXT NOT NULL, " +
+                        "`position` INTEGER NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "`colorIndex` INTEGER NOT NULL, " +
+                        "`typeIndex` INTEGER NOT NULL, " +
+                        "`customLabel` TEXT NOT NULL, " +
+                        "`deadlineAt` INTEGER NOT NULL, " +
+                        "`uid` TEXT NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, " +
+                        "`deletedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`id`))"
+                )
+                db.execSQL(
+                    "INSERT INTO `notes_new` " +
+                        "(`id`, `title`, `content`, `position`, `createdAt`, `colorIndex`, " +
+                        "`typeIndex`, `customLabel`, `deadlineAt`, `uid`, `updatedAt`, `deletedAt`) " +
+                        "SELECT `id`, `text`, '', `position`, `createdAt`, `colorIndex`, " +
+                        "`typeIndex`, `customLabel`, `deadlineAt`, `uid`, `updatedAt`, `deletedAt` " +
+                        "FROM `notes`"
+                )
+                db.execSQL("DROP TABLE `notes`")
+                db.execSQL("ALTER TABLE `notes_new` RENAME TO `notes`")
+            }
+        }
+
+        /**
          * 给表里所有 uid 为空的行补一个 UUIDv4。
          *
          * 这里不再开事务：Room 已经把整个迁移包在事务里了，
@@ -161,7 +212,7 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                     .addMigrations(
                         MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-                        MIGRATION_7_8
+                        MIGRATION_7_8, MIGRATION_8_9
                     )
                     .fallbackToDestructiveMigration()
                     .build()

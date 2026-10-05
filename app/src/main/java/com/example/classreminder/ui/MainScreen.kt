@@ -711,10 +711,15 @@ fun MainScreen(
     // 课表正在浏览第几周：也提到这里，切 Tab 回来还停在原来那周（重新校准会跟着回到本周）
     var shownWeek by remember(currentWeek) { mutableStateOf(currentWeek ?: 1) }
 
-    // 搜索过滤（便签页按便签内容匹配）
+    // 搜索过滤（便签页按标题 + 正文匹配）
+    // 标题和正文**都参与匹配**：用户记不清一句话写在标题还是正文里，
+    // 只搜其中一个就会出现「明明记得写过却搜不到」
     val filteredNotes = remember(searchQuery, notes) {
         if (searchQuery.isBlank()) notes
-        else notes.filter { it.text.contains(searchQuery, ignoreCase = true) }
+        else notes.filter {
+            it.title.contains(searchQuery, ignoreCase = true) ||
+                it.content.contains(searchQuery, ignoreCase = true)
+        }
     }
 
     // 选中的便签。被删掉或搜索过滤掉时它会自动变回 null，左下角操作区随之消失
@@ -1270,10 +1275,11 @@ fun MainScreen(
     if (addingNote) {
         NoteEditDialog(
             initial = null,
-            onSave = { text, colorIndex, typeIndex, customLabel, deadlineAt ->
+            onSave = { title, content, colorIndex, typeIndex, customLabel, deadlineAt ->
                 // 有高亮选中的便签就插到它上方，否则照旧置顶
                 viewModel.addNote(
-                    text = text,
+                    title = title,
+                    content = content,
                     aboveNoteId = selectedNote?.id,
                     colorIndex = colorIndex,
                     typeIndex = typeIndex,
@@ -1289,11 +1295,12 @@ fun MainScreen(
     editingNote?.let { target ->
         NoteEditDialog(
             initial = target,
-            onSave = { text, colorIndex, typeIndex, customLabel, deadlineAt ->
-                // 文字留空 = 只想换色 / 改分类：updateNote 内部会保留原文
+            onSave = { title, content, colorIndex, typeIndex, customLabel, deadlineAt ->
+                // 标题留空 = 只想换色 / 改分类：updateNote 内部会保留原标题
                 viewModel.updateNote(
                     id = target.id,
-                    text = text,
+                    title = title,
+                    content = content,
                     colorIndex = colorIndex,
                     typeIndex = typeIndex,
                     customLabel = customLabel,
@@ -2264,15 +2271,31 @@ private fun NoteRow(
                         .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = note.text,
-                        fontSize = 15.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        color = textColor,
-                        // 占满剩余宽度：右边的徽章 / 倒计时才不会被文字推到看不见
-                        modifier = Modifier.weight(1f)
-                    )
+                    // 标题 + 正文摘要两行。正文为空时**第二行整个不占位** ——
+                    // 只有标题的便签保持原来的单行紧凑高度，行高才不会忽高忽低。
+                    //
+                    // 正文色由 textColor 降透明度得到，而不是另取一个 token：
+                    // textColor 已经跟着「选中 / 未选中 / 悬停」变过，
+                    // 另取 token 会在某种状态下和底色撞在一起。
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = note.title,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = textColor
+                        )
+                        if (note.content.isNotBlank()) {
+                            Text(
+                                text = note.content,
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = textColor.copy(alpha = 0.62f)
+                            )
+                        }
+                    }
                     // ── 右侧：分类徽章 + Deadline 倒计时 ──
                     // 用户要求 deadline 便签「在右侧显示 deadline 时刻与剩余倒计时」，
                     // 分类徽章顺路放在它左边 —— 两者都是「这条便签的附加信息」，
@@ -2502,15 +2525,16 @@ private val UndoIcon: ImageVector by lazy {
  * 这样对话框在默认状态下仍是原来那个「输入框 + 调色盘」的简洁样子，
  * 只有用户真的选了复杂分类，界面才跟着长出来。
  *
- * [onSave] 回传六个字段，顺序和 [NoteEntity] 的声明一致。
+ * [onSave] 回传七个字段，顺序和 [NoteEntity] 的声明一致。
  */
 @Composable
 fun NoteEditDialog(
     initial: NoteEntity? = null,
-    onSave: (text: String, colorIndex: Int, typeIndex: Int, customLabel: String, deadlineAt: Long) -> Unit,
+    onSave: (title: String, content: String, colorIndex: Int, typeIndex: Int, customLabel: String, deadlineAt: Long) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var text by remember { mutableStateOf(initial?.text.orEmpty()) }
+    var title by remember { mutableStateOf(initial?.title.orEmpty()) }
+    var content by remember { mutableStateOf(initial?.content.orEmpty()) }
     // 当前选中的色号。打开时落在便签自己的颜色上；新建则是默认色
     var colorIndex by remember { mutableIntStateOf(initial?.colorIndex ?: DEFAULT_NOTE_COLOR) }
     // 分类三兄弟。打开编辑时落在便签自己的分类上，新建则是「空」
@@ -2519,7 +2543,7 @@ fun NoteEditDialog(
     var deadlineAt by remember { mutableLongStateOf(initial?.deadlineAt ?: 0L) }
 
     val focusRequester = remember { FocusRequester() }
-    // 打开就聚焦，「随手记一条」不用再点一下输入框
+    // 打开就聚焦标题 —— 「随手记一条」最先要写的就是标题，不用再点一下输入框
     LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
 
     val palette = notePalette()
@@ -2534,16 +2558,26 @@ fun NoteEditDialog(
             // 分类多了以后内容可能超过一屏，套一层纵向滚动兜底（小屏 + 展开了日期选择时）
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    // 新建时给一句实在的引导，比光秃秃的「内容」更能提示该写什么
-                    label = { Text("便签内容") },
-                    placeholder = { Text(if (editing) "" else "写点什么，例如「周五前交实验报告」") },
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("标题") },
+                    // 新建时给一句实在的引导，比光秃秃的「标题」更能提示该写什么
+                    placeholder = { Text(if (editing) "" else "一句话说清，例如「周五前交实验报告」") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester)
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = content,
+                    onValueChange = { content = it },
+                    label = { Text("内容") },
+                    placeholder = { Text("补充细节，可留空") },
                     maxLines = 6,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 96.dp)
-                        .focusRequester(focusRequester)
+                        .heightIn(min = 72.dp)
                 )
                 Spacer(Modifier.height(14.dp))
                 FieldLabel("颜色")
@@ -2595,11 +2629,11 @@ fun NoteEditDialog(
             }
         },
         confirmButton = {
-            // 文字留空时仍可保存 —— 上层会保留原文、只改颜色或分类。
-            // 新建便签没有原文，所以那种情况下仍要求非空
+            // 标题留空时仍可保存 —— 上层会保留原标题、只改颜色或分类。
+            // 新建便签没有原标题，所以那种情况下仍要求标题非空
             Button(
-                onClick = { onSave(text, colorIndex, typeIndex, customLabel, deadlineAt) },
-                enabled = editing || text.isNotBlank()
+                onClick = { onSave(title, content, colorIndex, typeIndex, customLabel, deadlineAt) },
+                enabled = editing || title.isNotBlank()
             ) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
@@ -3063,8 +3097,22 @@ private fun NoteDetailPane(
             Text("便签详情", fontSize = 13.sp, color = scheme.onSurfaceVariant)
         }
 
+        Spacer(Modifier.height(14.dp))
+        // 标题是这一栏的主标题：比列表里的 15sp 再大一号、加粗，
+        // 让「在右栏点开一条便签」有个明确的视觉落点。
+        // 长标题最多两行 —— 再长就该去正文里看，而不是把徽章和按钮挤出屏幕
+        Text(
+            text = note.title,
+            fontSize = 20.sp,
+            lineHeight = 27.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = scheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+
         if (hasType || hasDeadline) {
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (hasType) TypeBadge(label = note.typeLabel(), accent = accent)
                 if (hasDeadline) {
@@ -3074,7 +3122,9 @@ private fun NoteDetailPane(
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(14.dp))
+        Divider(color = scheme.outlineVariant)
+        Spacer(Modifier.height(14.dp))
 
         // 正文可滚：长便签在面板里不该被截断，也不该把下面的按钮顶出屏幕
         Box(
@@ -3083,12 +3133,22 @@ private fun NoteDetailPane(
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
         ) {
-            Text(
-                text = note.text,
-                fontSize = 15.sp,
-                lineHeight = 24.sp,
-                color = scheme.onSurface
-            )
+            if (note.content.isBlank()) {
+                // 只有标题的便签是合法状态，但一片空白会让人以为「内容没加载出来」，
+                // 所以明写一句，而不是留空
+                Text(
+                    text = "这条便签没有正文",
+                    fontSize = 13.sp,
+                    color = scheme.onSurfaceVariant
+                )
+            } else {
+                Text(
+                    text = note.content,
+                    fontSize = 15.sp,
+                    lineHeight = 24.sp,
+                    color = scheme.onSurface
+                )
+            }
         }
 
         Spacer(Modifier.height(12.dp))
