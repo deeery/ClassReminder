@@ -60,36 +60,91 @@ object UpdateCenter {
     private val _state = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val state: StateFlow<UpdateState> = _state.asStateFlow()
 
+    /**
+     * 「正在检查」的并发闸门。
+     *
+     * 不能靠 `if (_state.value is Checking) return` 判断：那只在**单线程**下成立，
+     * 而现在 `check()` 会切到 IO 线程池 —— 两次并发调用可能同时读到 `Idle`，
+     * 双双通过检查、发两次请求。`AtomicBoolean` 的 CAS 才是原子的。
+     */
+    private val _checking = java.util.concurrent.atomic.AtomicBoolean(false)
+
     // ── 检查 ────────────────────────────────────────────────────────
 
     /**
+     * 检查是否有新版本。**自己切到 IO 线程**（见下面的「线程约定」）。
+     *
      * @param manual 用户主动点的。`true` 时失败如实回执；`false`（启动静默检查）
      *   失败回到 [UpdateState.Idle]，不留错误痕 —— 没网不是用户该看到的报错。
      */
-    suspend fun check(ctx: Context, manual: Boolean) {
-        if (_state.value is UpdateState.Checking) return
-        _state.value = UpdateState.Checking
-        val result = runCatching { fetchLatest() }
-        result.onFailure { t ->
-            _state.value = if (manual) {
-                UpdateState.Failed(t.message ?: t::class.java.simpleName)
-            } else {
-                UpdateState.Idle
+    suspend fun check(ctx: Context, manual: Boolean) = withContext(Dispatchers.IO) {
+        checkOnIo(ctx, manual)
+    }
+
+    /**
+     * ## 线程约定：阻塞网络调用**由本类自己**负责挪到 IO 线程
+     *
+     * 🔴 曾经这里不切线程，靠**调用方**包 `withContext(Dispatchers.IO)`，
+     * 结果启动那条路径包了、用户手点的三条（检查更新 / 重新检查 / 重试）
+     * 只写了 `scope.launch { UpdateCenter.check(...) }` ——
+     * `rememberCoroutineScope()` 默认跑在 **main** dispatcher 上，
+     * 于是 `HttpURLConnection` 在主线程发起 → **NetworkOnMainThreadException**。
+     *
+     * 这类 bug 的教训是：**线程切换不能是调用方的责任**。
+     * 一个 suspend 函数只要内部有阻塞 IO，就应该自己 `withContext(IO)`，
+     * 调用方无论从哪个 dispatcher 调都安全 —— 否则每加一个入口就要记得包一次，
+     * 漏一个就是一次线上崩溃。公开的 `suspend` 函数保持「在任意上下文都能直接调」。
+     *
+     * （同项目 `SyncEngine.runSync()` 早就是「公开函数自持 `withContext(IO)`、
+     *   内部实现叫 `xxxOnIo`」的写法，本类此前没跟上。）
+     */
+    private fun checkOnIo(ctx: Context, manual: Boolean) {
+        // 用 CAS 抢占「检查中」，避免重复触发；`compareAndSet` 是原子的，
+        // 不能写成 `if (state is Checking) return` —— 那在并发下会双双通过。
+        if (!_checking.compareAndSet(false, true)) return
+        try {
+            _state.value = UpdateState.Checking
+            val result = runCatching { fetchLatest() }
+            result.onFailure { t ->
+                _state.value = if (manual) {
+                    UpdateState.Failed(describe(t))
+                } else {
+                    UpdateState.Idle
+                }
+                return
             }
-            return
+            val release = result.getOrThrow()
+            if (compareVersions(release.version, currentVersion) <= 0) {
+                _state.value = UpdateState.UpToDate(currentVersion)
+                return
+            }
+            _state.value = UpdateState.Available(
+                version = release.version,
+                notes = release.notes,
+                pageUrl = release.pageUrl,
+                apk = release.apk,
+                blocked = installBlocker(ctx)
+            )
+        } finally {
+            _checking.set(false)
         }
-        val release = result.getOrThrow()
-        if (compareVersions(release.version, currentVersion) <= 0) {
-            _state.value = UpdateState.UpToDate(currentVersion)
-            return
+    }
+
+    /**
+     * 异常 → 人话。第一版直接透传 `t.message`，用户在「检查失败：」后面看到的
+     * 是 `Unable to resolve host "api.github.com"` 这种英文技术串。
+     *
+     * `internal` 而不是 private：纯函数，值得单测（见 `UpdateCenterTest`）。
+     */
+    internal fun describe(t: Throwable): String {
+        val raw = (t.message ?: "").lowercase()
+        return when {
+            t is java.net.UnknownHostException || "unable to resolve host" in raw ->
+                "网络不可用，检查一下连接"
+            t is java.net.SocketTimeoutException || "timed out" in raw ->
+                "连接超时，稍后再试"
+            else -> t.message ?: t::class.java.simpleName
         }
-        _state.value = UpdateState.Available(
-            version = release.version,
-            notes = release.notes,
-            pageUrl = release.pageUrl,
-            apk = release.apk,
-            blocked = installBlocker(ctx)
-        )
     }
 
     /** 能不能自己走安装流程。装不了时给出人话理由 */
@@ -160,6 +215,12 @@ object UpdateCenter {
 
     // ── 下载 + 交给系统安装器 ────────────────────────────────────────
 
+    /**
+     * 下载 APK 并交给系统安装器。
+     *
+     * **自己切到 IO 线程**（同 [check] 的线程约定）—— 调用方别再包 `withContext`。
+     * 唯一需要回主线程的是最后 `startActivity` 拉安装器，那里单独切。
+     */
     suspend fun downloadAndInstall(ctx: Context) {
         val available = _state.value as? UpdateState.Available ?: return
         val apk = available.apk
@@ -169,6 +230,7 @@ object UpdateCenter {
             )
             return
         }
+        // installBlocker 只读本地状态（PackageManager / 文件系统），不碰网络
         val blocker = installBlocker(ctx)
         if (blocker != null) {
             _state.value = UpdateState.NeedsFullPackage(available.version, blocker, available.pageUrl)
@@ -176,16 +238,15 @@ object UpdateCenter {
         }
 
         _state.value = UpdateState.Downloading(0L, apk.size)
-        val result = runCatching {
-            withContext(Dispatchers.IO) { download(ctx, apk) { got, total ->
-                _state.value = UpdateState.Downloading(got, total)
-            } }
+        val result = withContext(Dispatchers.IO) {
+            runCatching { download(ctx, apk) { got, total -> _state.value = UpdateState.Downloading(got, total) } }
         }
         result.onSuccess { file ->
             _state.value = UpdateState.InstallerLaunched(available.version)
-            launchInstaller(ctx, file)
+            // 拉系统安装器要走主线程（startActivity 的 UI 亲和性）
+            withContext(Dispatchers.Main) { launchInstaller(ctx, file) }
         }.onFailure { t ->
-            _state.value = UpdateState.Failed(t.message ?: t::class.java.simpleName)
+            _state.value = UpdateState.Failed(describe(t))
         }
     }
 

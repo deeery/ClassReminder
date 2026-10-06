@@ -12,10 +12,15 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateIntOffsetAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -674,15 +679,18 @@ fun MainScreen(
     // ── 更新检查 ──
     // 启动时静默查一次 GitHub Releases。失败**不留痕**（回到 Idle）：
     // 没网、被限流都不是用户此刻该看到的报错，用户想查会自己去点「检查更新」。
-    // 网络调用是阻塞式的（项目不引三方库，用 HttpURLConnection），必须挪到 IO 线程，
-    // 否则会卡住首帧。
+    //
+    // 线程：`UpdateCenter.check()` **自己**切 IO（内部 `withContext(Dispatchers.IO)`），
+    // 所以这里和按钮里都**不要**再包一层 —— 曾经靠调用方包，
+    // 结果启动路径包了、手点路径漏了，主线程发 `HttpURLConnection` 直接崩
+    // NetworkOnMainThreadException。详见 UpdateCenter.check 的「线程约定」。
     val updateState by UpdateCenter.state.collectAsState()
     val updateAvailable = updateState as? UpdateState.Available
     val notifyUpdate = remember(settingsSections.updatePrefsRevision) { Prefs.getNotifyUpdate(ctx) }
     val showUpdateDot = updateAvailable != null && notifyUpdate
     LaunchedEffect(Unit) {
         if (Prefs.getAutoCheckUpdate(ctx)) {
-            withContext(Dispatchers.IO) { UpdateCenter.check(ctx, manual = false) }
+            UpdateCenter.check(ctx, manual = false)
         }
     }
     // 查到新版本时弹一次 Toast。key 用版本号而不是 updateState：
@@ -5556,10 +5564,95 @@ private fun UpdateStatusBlock(
         )
     }
 
+    /**
+     * 自绘进度条 —— **不能用 `LinearProgressIndicator`**。
+     *
+     * 🔴 material3 1.1.2 是**针对 compose-animation 1.4.1 编译**的，而本项目
+     * 经 BOM 2024.01.00 解析后 animation-core 实际是 **1.6.0**。
+     * 1.4.0 起 `KeyframesSpecConfig.at()` / `atFraction()` / `using()` 被
+     * **上移**到了新父类 `KeyframesSpecBaseConfig`，1.6.0 的
+     * `KeyframesSpecConfig` 里**不再声明**这三个方法（`javap` 实测）。
+     * 于是 material3 里那条 `LinearProgressIndicator` 内部 `keyframes { at(...) }`
+     * 在生成动画规格时抛：
+     *
+     *     NoSuchMethodError: No virtual method at(Ljava/lang/Object;I)
+     *       L...KeyframesSpec$KeyframeEntity; in class ...KeyframesSpec$KeyframesSpecConfig
+     *
+     * 这是**运行时**错误（编译期一直绿灯），且它出现在**重组**里
+     * （`ComposableLambdaImpl.invoke` → `Recomposer.performRecompose` → 主线程），
+     * 所以是一渲染到就**必崩**。
+     *
+     * 叠加坑：`NoSuchMethodError` **不是** [Exception] 的子类（它是 [Error]），
+     * 所以 `runCatching` / `try { } catch (e: Exception)` **都接不住** ——
+     * 唯一可靠的做法就是**别调它**。
+     *
+     * `AccountSyncSection.kt` 里早就踩过同一个坑（登录按钮上不用
+     * `CircularProgressIndicator`），此处是当时漏改的三处。自绘既能显示进度，
+     * 也顺手避开了整条 `keyframes` 动画链路。
+     *
+     * @param progress 0f..1f 的确定进度；null 表示不确定（走往复动画）。
+     */
+    @Composable
+    fun updateProgressBar(progress: Float?) {
+        val track = scheme.onSurface.copy(alpha = 0.12f)
+        val barColor = scheme.primary
+
+        if (progress != null) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(track)
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(progress.coerceIn(0f, 1f))
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(barColor)
+                )
+            }
+            return
+        }
+
+        // 不确定进度：用 `infiniteRepeatable` + `tween` 做往复扫光。
+        // 这两个 API 在 1.4→1.6 之间没有签名变动（`tween` 只是默认参数变了），
+        // 是安全的；只要不碰 `keyframes { }` 就行。
+        val transition = rememberInfiniteTransition(label = "update-indeterminate")
+        val offset by transition.animateFloat(
+            initialValue = -0.35f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 900, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "update-indeterminate-offset"
+        )
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(track)
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth(0.35f)
+                    .fillMaxHeight()
+                    .offset(x = (offset * 340).dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(barColor)
+            )
+        }
+    }
+
     when (state) {
         is UpdateState.Idle -> {
             statusLine("点击下面的按钮检查是否有新版本。")
             Spacer(Modifier.height(10.dp))
+            // `scope` 是 rememberCoroutineScope()（main dispatcher），
+            // 但 check() 内部自己切 IO，直接调即可，不要再包 withContext。
             Button(
                 onClick = { scope.launch { UpdateCenter.check(ctx, manual = true) } },
                 modifier = Modifier.fillMaxWidth()
@@ -5569,7 +5662,7 @@ private fun UpdateStatusBlock(
         is UpdateState.Checking -> {
             statusLine("正在检查…")
             Spacer(Modifier.height(10.dp))
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            updateProgressBar(null)
         }
 
         is UpdateState.UpToDate -> {
@@ -5626,10 +5719,7 @@ private fun UpdateStatusBlock(
             statusLine("正在下载安装包…")
             Spacer(Modifier.height(10.dp))
             if (state.percent >= 0) {
-                LinearProgressIndicator(
-                    progress = state.percent / 100f,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                updateProgressBar(state.percent / 100f)
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "${state.percent}%（${state.received / 1024} / ${state.total / 1024} KB）",
@@ -5637,7 +5727,7 @@ private fun UpdateStatusBlock(
                     color = scheme.onSurfaceVariant
                 )
             } else {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                updateProgressBar(null)
             }
         }
 
